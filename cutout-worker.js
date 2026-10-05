@@ -268,7 +268,8 @@ async function ocrModels() {
     bytes("rec.onnx").then((b) => rt.InferenceSession.create(b, opts)),
     fetch(OCR_DIR + "keys.txt").then((r) => r.text()),
   ]);
-  ocr = { det, rec, chars: ["", ...keys.split("\n"), " "] };
+  // one character a line (whatever the line ends), then the space; 0 is CTC's blank
+  ocr = { det, rec, chars: ["", ...keys.replace(/\r?\n$/, "").split(/\r?\n/), " "] };
   return ocr;
 }
 
