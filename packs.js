@@ -43,11 +43,28 @@ export async function load(country) {
   const pack = manifest.countries?.[country];
   const entries = new Map();
   if (pack) for (const part of pack.parts) for (const [id, e] of await contents(part)) entries.set(id, e);
-  index = { ...(index || {}), [country]: { version: pack?.version ?? 0, count: entries.size, entries } };
+  // each photo's hash (tools/pack_hashes.py), when made for this pack
+  let hashes = new Map();
+  try {
+    // the pack's version and the hash kind in the link: GitHub's cache never hands back an older file
+    const h = await (await fetch(`${BASE}${country}/hashes.json?v=${pack?.version}.128`, { cache: "no-store" })).json();
+    if (h.version === pack?.version) hashes = new Map(Object.entries(h.hashes).map(([k, v]) => [Number(k), v]));
+  } catch { /* none yet: no same-photo check against the pack */ }
+  index = { ...(index || {}), [country]: { version: pack?.version ?? 0, count: entries.size, entries, hashes } };
   return index[country];
 }
 
 export const has = (country, id) => !!index?.[country]?.entries.has(Number(id));
+
+/** The pack photo's hash for this medicine, if known. */
+export const hashOf = (country, id) => index?.[country]?.hashes.get(Number(id)) ?? null;
+
+/** Pack photos that look like this one: [[id, how many bits differ]], closest first. */
+export function lookalikes(country, hash, distance, max = 8) {
+  const out = [];
+  for (const [id, h] of index?.[country]?.hashes ?? []) { const d = distance(hash, h); if (d <= max) out.push([id, d]); }
+  return out.sort((a, b) => a[1] - b[1]);
+}
 
 const urls = new Map();
 

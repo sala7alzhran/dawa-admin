@@ -5,6 +5,8 @@
 import * as N from "./names.js";
 import * as Packs from "./packs.js";
 import * as Cut from "./cutout.js";
+import * as BM from "./boxmatch.js";
+import { readBox } from "./ocr.js";
 
 const COUNTRY = "SY";
 const SQLJS = "https://cdn.jsdelivr.net/npm/sql.js@1.13.0/dist/";
@@ -84,6 +86,7 @@ async function loadChanges() {
     if (c.note?.startsWith("undo #")) { const was = changes.find((x) => x.id === Number(c.note.slice(6))); if (was) was.undone_by = c.id; }
     changes.push(c);
     apply(c, j.links);
+    if (c.kind === "drug") matcher = null;
   }
   // fresh photo links for older ones too (they last an hour)
   for (const [path, url] of Object.entries(j.links)) for (const p of panelPhotos.values()) if (p.data.path === path) p.url = url;
@@ -255,7 +258,8 @@ function dialog(html) {
   bg.onclick = (e) => { if (e.target === bg) bg.remove(); };
   return bg;
 }
-const closeAll = () => document.querySelectorAll(".dlg").forEach((d) => d.remove());
+/** Closes the [n] topmost windows (a form and its question), leaving the ones under them (the photos). */
+const closeTop = (n) => [...document.querySelectorAll(".dlg")].slice(-n).forEach((d) => d.remove());
 
 // ---------------------------------------------------------------- one medicine
 
@@ -308,7 +312,7 @@ const LABEL = Object.fromEntries(FIELDS.map(([k, l]) => [k, l.replace(/ \(.*\)$/
 function options(sql) { return all(sql).map((r) => Object.values(r)[0]).filter(Boolean); }
 
 /** The admin's form: empty for a new medicine, filled to change one ([d] from the list). */
-function medForm(d, preset = {}) {
+function medForm(d, preset = {}, onSaved = null) {
   const editing = !!d;
   const v = editing ? { ...d, barcodes: codesOf(d.id).join(" ") } : { pack_unit: "TAB", ...preset };
   const forms = options("SELECT form_ar FROM drugs WHERE form_ar != '' GROUP BY form_ar ORDER BY COUNT(*) DESC LIMIT 80");
@@ -325,7 +329,8 @@ function medForm(d, preset = {}) {
   const bg = dialog(`
     <div style="display:flex;align-items:center;gap:10px;justify-content:space-between"><h1 style="margin:0">${editing ? "تعديل دواء" : "دواء جديد"}</h1>
     <button class="btn ghost small" data-x>إغلاق</button></div>
-    ${editing ? `<p class="sub" dir="auto">${esc(title(d))}</p>` : `<p class="sub">اكتب ما على العلبة. أثناء الكتابة أبحث في القائمة كلها، وأنبّهك إن كان الدواء موجودًا.</p>`}
+    ${editing ? `<p class="sub" dir="auto">${esc(title(d))}</p>` : onSaved ? `<p class="sub">ملأت ما قرأته من العلبة: صحّح ما يلزم. إن ظهر الدواء أدناه في القائمة فاضغطه، فتذهب الصورة إليه.</p>`
+      : `<p class="sub">اكتب ما على العلبة. أثناء الكتابة أبحث في القائمة كلها، وأنبّهك إن كان الدواء موجودًا.</p>`}
     <div class="form">${FIELDS.map(input).join("")}</div>
     <datalist id="dl-forms">${forms.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
     <datalist id="dl-makers">${makers.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
@@ -349,11 +354,11 @@ function medForm(d, preset = {}) {
   ar.oninput = () => { arTouched = true; check(); };
   const suggestAr = () => { if (!arTouched) ar.value = N.arabicName(bg.querySelector("#f-brand").value.trim().toUpperCase(), bg.querySelector("#f-maker").value.trim()); };
   let t;
-  const check = () => { clearTimeout(t); t = setTimeout(() => showCheck(bg, read(), d), 200); };
+  const check = () => { clearTimeout(t); t = setTimeout(() => showCheck(bg, read(), d, onSaved), 200); };
   bg.querySelectorAll("input,select").forEach((el) => { if (el !== ar) el.addEventListener("input", () => { suggestAr(); check(); }); });
   suggestAr();
   check();
-  bg.querySelector("[data-save]").onclick = () => saveMed(bg, read(), d);
+  bg.querySelector("[data-save]").onclick = () => saveMed(bg, read(), d, onSaved);
 }
 
 /** What the list already has that looks like this: exact (same barcode, or same name, strength and form) and close. */
@@ -369,7 +374,9 @@ function findSame(f, selfId) {
   if (brand.length >= 2) {
     const key = N.squash(brand), fc = f.form_ar ? N.formCode(f.form_ar) : "";
     const pack = Number(f.pack_count) || 0;
-    for (const r of all("SELECT * FROM drugs WHERE brand_key = ?", [key])) {
+    // the list often writes the strength into the name ("AZITROLYD 500"): that is the same name
+    const digits = (f.strength.match(/\d+(?:\.\d+)?/) ?? [""])[0];
+    for (const r of all("SELECT * FROM drugs WHERE brand_key = ? OR (? != '' AND brand_key = ?)", [key, digits, key + digits])) {
       if (r.id === selfId || why.has(r.id)) continue;
       if (N.squash(r.strength) !== N.squash(f.strength) || (fc && r.form_code !== fc)) continue;
       // the same medicine in another pack size is a different item in the list (unless no size was written)
@@ -388,7 +395,7 @@ function findSame(f, selfId) {
   return { exact, why, close: close.slice(0, 8) };
 }
 
-function showCheck(bg, f, d) {
+function showCheck(bg, f, d, onSaved = null) {
   const el = bg.querySelector("#f-check");
   if (!f.brand && !f.barcodes.length) { el.innerHTML = ""; return; }
   const { exact, why, close } = findSame(f, d?.id);
@@ -397,7 +404,7 @@ function showCheck(bg, f, d) {
   el.innerHTML = (exact.length ? `<div class="msg err" style="margin-top:12px"><b>هذا الدواء موجود في القائمة</b>${exact.map((r) => item(r, why.get(r.id))).join("")}</div>` : "")
     + (close.length ? `<div class="msg warn" style="margin-top:12px"><b>أدوية قريبة في القائمة: هل تقصد أحدها؟</b>${close.map((r) => item(r, why.get(r.id) ?? "")).join("")}</div>` : "")
     + (!exact.length && !close.length && f.brand.length >= 3 ? `<div class="msg ok" style="margin-top:12px">لا يوجد دواء بهذا الاسم في القائمة.</div>` : "");
-  el.querySelectorAll("[data-open]").forEach((r) => (r.onclick = () => { bg.remove(); medSheet(Number(r.dataset.open)); }));
+  el.querySelectorAll("[data-open]").forEach((r) => (r.onclick = () => { bg.remove(); onSaved ? onSaved(Number(r.dataset.open)) : medSheet(Number(r.dataset.open)); }));
   lazyPhotos(el);
 }
 
@@ -443,7 +450,9 @@ async function put(row, ref, before, note) {
   return j.ref_id;
 }
 
-async function saveMed(bg, f, d) {
+async function saveMed(bg, f, d, onSaved = null) {
+  // a new medicine: the photo it was made for gets it (else its page opens)
+  const added = (ref) => (onSaved ? onSaved(ref) : medSheet(ref));
   if (!f.brand) return ctx.toast("اكتب اسم الدواء بالإنجليزية كما على العلبة.");
   if (!f.form_ar) return ctx.toast("اختر شكل الدواء (أقراص، شراب…).");
   for (const k of ["usd", "cost_usd", "pack_count"]) if (f[k] && !(Number(f[k]) >= 0)) return ctx.toast(`${LABEL[k]}: اكتب رقمًا.`);
@@ -459,7 +468,7 @@ async function saveMed(bg, f, d) {
     dlg.querySelector("[data-no]").onclick = () => dlg.remove();
     dlg.querySelector("[data-ok]").onclick = async () => {
       const ref = await put({ ...old, ...full }, d.id, { row: keep(d), source: "list" });
-      if (ref) { closeAll(); ctx.toast("حُفظ. يصل إلى الصيدليات خلال يوم."); }
+      if (ref) { closeTop(2); ctx.toast("حُفظ. يصل إلى الصيدليات خلال يوم."); }
     };
     return;
   }
@@ -474,22 +483,30 @@ async function saveMed(bg, f, d) {
       <button class="btn ghost" data-new>إنه دواء آخر، أضفه</button><button class="btn ghost" data-no>إلغاء</button></div>`);
     dlg.querySelector("[data-no]").onclick = () => dlg.remove();
     dlg.querySelector("[data-upd]").onclick = async () => {
-      if (!SHOWN.some((k) => filled(f, k) && !same(k, old[k], f[k]))) { closeAll(); return ctx.toast("لا جديد فيما كتبتَه: الدواء كما هو."); }
+      if (!SHOWN.some((k) => filled(f, k) && !same(k, old[k], f[k]))) { closeTop(2); onSaved?.(exact[0].id); return ctx.toast("لا جديد فيما كتبتَه: الدواء كما هو."); }
       const ref = await put(merged(old, f), exact[0].id, { row: keep(exact[0]), source: "list" });
-      if (ref) { closeAll(); ctx.toast("حُدّث الدواء الموجود."); }
+      if (ref) { closeTop(2); ctx.toast("حُدّث الدواء الموجود."); onSaved?.(ref); }
     };
     dlg.querySelector("[data-new]").onclick = async () => {
       const ref = await put(f, null, null);
-      if (ref) { closeAll(); ctx.toast("أُضيف الدواء."); medSheet(ref); }
+      if (ref) { closeTop(2); ctx.toast("أُضيف الدواء."); added(ref); }
     };
     return;
   }
   if (!confirm(`سيُضاف «${title({ brand: f.brand.toUpperCase(), strength: f.strength })}» إلى قائمة الأدوية عند كل الصيدليات. متأكد؟`)) return;
   const ref = await put(f, null, null);
-  if (ref) { closeAll(); ctx.toast("أُضيف الدواء. يصل إلى الصيدليات خلال يوم."); medSheet(ref); }
+  if (ref) { closeTop(1); ctx.toast("أُضيف الدواء. يصل إلى الصيدليات خلال يوم."); added(ref); }
 }
 
 // ---------------------------------------------------------------- box photos
+// The admin only chooses photos; the rest happens by itself. Each photo is read (its text, and any barcode) and
+// matched to the list as a pharmacy's phone does; its background is cut away; then:
+//  - sure of the medicine, and the medicine has no photo: saved, with an undo;
+//  - the medicine has a photo: the two side by side, the admin chooses (or "the same photo is there already");
+//  - not sure: the closest medicines to tap, or a search;
+//  - not in the list: one tap to add the medicine (filled in from the box), and the photo goes with it.
+// Nothing is saved without the admin for a photo that shows several medicines, whose cut went wrong, or that looks
+// like another medicine's photo.
 
 const toBase64 = async (blob) => {
   const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -498,135 +515,296 @@ const toBase64 = async (blob) => {
   return btoa(s);
 };
 
-/** Photos waiting in the add-photos screen: { file, src, out, ref, state, note } */
+/** The list as candidates for the box matcher (built once, again after the admin changes the list). */
+let matcher = null;
+function boxMatcher() {
+  if (matcher) return matcher;
+  const makers = all("SELECT maker, short, en FROM makers");
+  const latin = new Map(makers.map((m) => [m.short, m.en.split("|").filter(Boolean)]));
+  const rows = all("SELECT id, brand, composition, strength, form_code, pack_count, maker, maker_short FROM drugs");
+  const cands = rows.map((d) => BM.candidate({ id: d.id, brand: d.brand, ingredient: d.composition, strength: d.strength, formCode: d.form_code,
+    packCount: d.pack_count, makerKey: d.maker_short || d.maker, makerLatin: latin.get(d.maker_short || d.maker) ?? [] }));
+  matcher = { index: new BM.Index(cands, [...latin.entries()]), byId: new Map(cands.map((c) => [c.id, c])), makers };
+  return matcher;
+}
+
+const FORM_AR = { TAB: "أقراص", CAP: "محافظ", SYRUP: "شراب", SUSP: "معلق فموي", DROPS: "نقط فموية", EYE_DROPS: "قطرة عينية", CREAM: "كريم",
+  OINT: "مرهم", GEL: "جل", SUPP: "تحاميل", INJ: "محلول للحقن/حبابات", SACHET: "ظروف", SPRAY: "بخاخ", INHALER: "بخة محددة", LOTION: "غسول" };
+const NOT_A_NAME = /^(R\s*X|R\s*-?\s*ONLY|RONLY|PRESCRIPTION.*|FOOD SUPPLEMENT|FILM COATED.*|TABLETS?|CAPSULES?|SYRUP)$/i;
+
+/** Photos in the add-photos screen: { file, src, read?, ref?, fixed, sure, how, suggest[], several, out?, same, twin, saved?, dropped, busy, error } */
 let queue = [];
+let bgEl = null;
+
+const done = (q) => q.saved || q.dropped || q.same;
+const unsaved = () => queue.filter((q) => !done(q)).length;
 
 function batch(files, ref = null) {
-  queue = files.map((file) => ({ file, src: URL.createObjectURL(file), out: null, outUrl: null, ref, state: "wait", plain: false }));
-  const bg = dialog(`
+  queue = files.map((file) => ({ file, src: URL.createObjectURL(file), ref, fixed: !!ref, sure: false, suggest: [], busy: "read" }));
+  bgEl = dialog(`
     <div style="display:flex;align-items:center;gap:10px;justify-content:space-between"><h1 style="margin:0">إضافة صور</h1>
     <button class="btn ghost small" data-x>إغلاق</button></div>
-    <p class="sub">تُقصّ خلفية كل صورة وتصبح بيضاء مثل صور التطبيق. اختر لكل صورة دواءها، ثم احفظ.</p>
+    <p class="sub">لا تفعل شيئًا: أقرأ كل علبة وأعرف دواءها، وأقصّ خلفيتها، وأحفظ ما أنا متأكد منه وحده. ما يحتاج قرارك يبقى هنا.</p>
     <div id="model-state"></div>
-    <div class="list" id="queue"></div>
-    <button class="btn wide" data-all>احفظ كل الصور الجاهزة</button>`);
-  bg.classList.add("wide-sheet");
-  bg.querySelector("[data-x]").onclick = () => { bg.remove(); queue = []; };
-  bg.querySelector("[data-all]").onclick = saveAll;
+    <div id="q-summary" class="chips"></div>
+    <div class="list" id="queue"></div>`);
+  bgEl.classList.add("wide-sheet");
+  const close = () => {
+    if (unsaved() && !confirm(`بقيت ${unsaved()} صورة لم تُحفظ. إن أغلقت النافذة ضاعت. أغلق؟`)) return;
+    bgEl.remove(); bgEl = null; queue = [];
+    window.removeEventListener("beforeunload", guard);
+  };
+  bgEl.querySelector("[data-x]").onclick = close;
+  bgEl.onclick = (e) => { if (e.target === bgEl) close(); };
+  window.addEventListener("beforeunload", guard);
   renderQueue();
   work();
+}
+function guard(e) { if (unsaved()) { e.preventDefault(); e.returnValue = ""; } }
+
+/** What the box says: its medicine if sure, else the closest ones. */
+async function identify(q) {
+  const { lines, codes } = await readBox(q.file);
+  const m = boxMatcher();
+  const reading = BM.read(lines);
+  q.read = { lines, codes, reading };
+  if (q.fixed) return;
+  for (const code of codes) {
+    const d = byCode(code);
+    if (d) { q.ref = d.id; q.sure = true; q.how = "barcode"; return; }
+  }
+  if (reading.isEmpty) return;
+  const r = BM.match(reading, m.index.shortlist(reading), m.index.vocabulary);
+  q.read.result = r;
+  q.several = BM.several(lines, r.matches[0]);
+  q.suggest = [...new Set(r.matches.map((x) => x.candidate.id))].slice(0, 4);
+  if (r.confident && !q.several) { q.ref = q.suggest[0]; q.sure = true; q.how = "text"; }
+}
+
+/** Whether the box's text has this medicine's name (null: nothing readable to tell). */
+function fits(q, id) {
+  const r = q.read?.reading;
+  const c = boxMatcher().byId.get(id);
+  if (!r || r.isEmpty || !c) return null;
+  const x = BM.match(r, [c], boxMatcher().index.vocabulary).matches[0];
+  return !!x && x.found.has("NAME");
+}
+
+/** Another medicine whose photo looks the same as this one (in the pack, added here, or in this batch). */
+function lookalike(q) {
+  if (!q.out?.hash) return null;
+  const other = (id) => id !== q.ref && (!q.ref || drug(id)?.brand_key !== drug(q.ref)?.brand_key);
+  for (const [id] of Packs.lookalikes(COUNTRY, q.out.hash, Cut.distance, 5)) if (other(id) && drug(id)) return drug(id);
+  for (const [ref, p] of panelPhotos) if (p.data.dhash && other(ref) && Cut.distance(p.data.dhash, q.out.hash) <= 5) return drug(ref);
+  for (const o of queue) if (o !== q && o.out && !o.dropped && Cut.distance(o.out.hash, q.out.hash) <= 5) return { brand: "صورة أخرى في هذه الدفعة", strength: "" };
+  return null;
+}
+
+/** The medicine's current photo is this very photo (nothing to do). */
+function samePhoto(q) {
+  if (!q.ref || !q.out?.hash) return false;
+  const p = photoOf(q.ref);
+  const h = p?.source === "panel" ? p.data.dhash : p?.source === "pack" ? Packs.hashOf(COUNTRY, q.ref) : null;
+  return !!h && Cut.distance(h, q.out.hash) <= 5;
+}
+
+/** Decides what can be decided alone: the same photo, or a sure medicine without a photo (saved). */
+async function settle(q) {
+  if (done(q) || !q.out || !q.ref) return;
+  q.same = samePhoto(q);
+  q.twin = lookalike(q);
+  if (q.same) return;
+  const clean = q.out.cut && !q.out.notes.length;
+  if (q.sure && clean && !q.twin && !photoOf(q.ref)) await savePhoto(q, true);
 }
 
 async function work() {
   const state = $("model-state");
+  // first every photo read and matched (a second or two each), so the answers show at once; then the cutting
+  for (const q of queue) {
+    try { await identify(q); } catch (e) { console.error(e); }
+    q.busy = "cut";
+    renderQueue();
+  }
   try {
     if (!(await Cut.ready())) state.innerHTML = `<div class="msg warn">أداة قص الخلفية تُنزَّل الآن مرة واحدة فقط (نحو 490 ميغابايت)، ثم تبقى في هذا المتصفح. <span id="model-pct"></span></div>`;
-    else state.innerHTML = `<div class="msg ok">أُجهّز أداة قص الخلفية…</div>`;
     await Cut.load((x) => { const el = $("model-pct"); if (el) el.textContent = Math.round(x * 100) + "٪"; });
-    state.innerHTML = "";
+    if (state) state.innerHTML = "";
   } catch (e) {
     console.error(e);
-    state.innerHTML = `<div class="msg err">تعذّر تشغيل أداة قص الخلفية في هذا المتصفح. تستطيع حفظ الصور كما هي على خلفية بيضاء.</div>`;
+    if (state) state.innerHTML = `<div class="msg err">تعذّر تشغيل أداة قص الخلفية في هذا المتصفح. الصور تُحفظ كما هي على خلفية بيضاء.</div>`;
     for (const q of queue) q.plain = true;
   }
-  for (const q of queue) {
-    if (q.state !== "wait") continue;
-    q.state = "busy";
-    renderQueue();
-    try {
-      const r = await Cut.clean(q.file, { plain: q.plain });
-      q.out = r;
-      if (q.outUrl) URL.revokeObjectURL(q.outUrl);
-      q.outUrl = URL.createObjectURL(r.blob);
-      q.state = "done";
-    } catch (e) {
-      console.error(e);
-      q.state = "error";
-    }
-    renderQueue();
-  }
+  for (const q of queue) await cut(q);
 }
 
-/** Another photo (in the list or in this batch) that looks the same as this one. */
-function lookalike(q) {
-  if (!q.out) return null;
-  for (const [ref, p] of panelPhotos) if (p.data.dhash && ref !== q.ref && Cut.distance(p.data.dhash, q.out.hash) <= 6) return drug(ref);
-  for (const o of queue) if (o !== q && o.out && Cut.distance(o.out.hash, q.out.hash) <= 6) return { brand: "صورة أخرى في هذه الدفعة", strength: "" };
-  return null;
+async function cut(q) {
+  if (q.dropped || !bgEl) return;
+  q.busy = "cut";
+  renderQueue();
+  try {
+    q.out = await Cut.clean(q.file, { plain: !!q.plain });
+    if (q.outUrl) URL.revokeObjectURL(q.outUrl);
+    q.outUrl = URL.createObjectURL(q.out.blob);
+    q.error = false;
+  } catch (e) {
+    console.error(e);
+    q.error = true;
+  }
+  q.busy = null;
+  await settle(q);
+  renderQueue();
+}
+
+/** The medicine's name as printed: the biggest words, joined as they stand side by side ("AZ" + "ITROLYD" = "AZITROLYD"). */
+function nameOnBox(lines) {
+  const big = lines.filter((l) => l.confidence >= 0.6 && /[A-Za-z]{2}/.test(l.text) && !NOT_A_NAME.test(l.text.trim()));
+  if (!big.length) return "";
+  const top = big.reduce((a, b) => (b.height > a.height ? b : a));
+  const row = big.filter((l) => l.height >= 0.8 * top.height && Math.abs((l.y ?? 0) - (top.y ?? 0)) <= 0.6 * top.height).sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
+  let name = "";
+  for (let i = 0; i < row.length; i++) {
+    const gap = i ? (row[i].x ?? 0) - ((row[i - 1].x ?? 0) + (row[i - 1].w ?? 0)) : 0;
+    name += (i && gap > 0.35 * top.height ? " " : "") + row[i].text;
+  }
+  return name.replace(/[^A-Za-z0-9 \-./]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Active ingredients the box names, even when the reader joined them to other words ("AZITHROMYCINUSP500MG"). */
+function ingredientsOnBox(q) {
+  const seen = new Set(q.read?.result?.seenIngredients ?? []);
+  const text = (q.read?.lines ?? []).map((l) => l.text.toUpperCase().replace(/[^A-Z]/g, ""));
+  for (const ing of boxMatcher().index.vocabulary.ingredients) if (ing.length >= 7 && text.some((w) => w.length > ing.length && w.includes(ing))) seen.add(ing);
+  return [...seen].filter((w) => !/^(TABLETS?|CAPSULES?|SUSPENSION|SOLUTION|COATED|SUPPLEMENT|PRESCRIPTION|MEDICINE)$/.test(w));
+}
+
+/** The new medicine's form, filled in from what the box says; the photo goes with the medicine once saved. */
+function addFromBox(q) {
+  const r = q.read?.reading;
+  const brand = nameOnBox(q.read?.lines ?? []);
+  const strength = (q.read?.lines ?? []).map((l) => N.cleanStrength(l.text)).find(Boolean) ?? "";
+  const form = r ? [...r.forms].map((f) => FORM_AR[f]).find(Boolean) ?? "" : "";
+  const comp = ingredientsOnBox(q).join("+");
+  const makerShort = q.read?.result?.seenMakers?.[0];
+  const maker = makerShort ? boxMatcher().makers.find((m) => m.short === makerShort)?.maker ?? "" : "";
+  medForm(null, { brand, strength, form_ar: form, composition: comp, maker, barcodes: (q.read?.codes ?? []).join(" ") }, async (ref) => {
+    matcher = null;
+    q.ref = ref; q.fixed = true; q.sure = true; q.how = "added";
+    q.same = samePhoto(q); q.twin = lookalike(q);
+    renderQueue();
+    // a medicine that was there already and has a photo: the admin compares first
+    if (q.out && !q.same && !photoOf(ref)) await savePhoto(q, true);
+    renderQueue();
+  });
+}
+
+function summary() {
+  const n = (f) => queue.filter(f).length;
+  const parts = [
+    [n((q) => q.saved), "حُفظت"], [n((q) => q.same), "موجودة أصلًا"],
+    [n((q) => !done(q) && !q.busy && q.ref), "تنتظر قرارك"], [n((q) => !done(q) && !q.busy && !q.ref), "تحتاج تحديد الدواء"],
+    [n((q) => !done(q) && q.busy), "قيد العمل"],
+  ].filter(([k]) => k > 0);
+  const el = $("q-summary");
+  if (el) el.innerHTML = parts.map(([k, l]) => `<span class="chip">${l}: ${k}</span>`).join("");
+}
+
+function pickList(ids) {
+  return ids.map((id) => drug(id)).filter(Boolean).map((r) => `<div class="row hit" data-pick="${r.id}"><img class="thumb small nophoto" data-photo="${r.id}" alt="">
+    <div class="main"><div class="name" dir="auto">${esc(title(r))}</div><div class="meta">${esc(subtitle(r))}${photoOf(r.id) ? " · له صورة" : " · بلا صورة"}</div></div></div>`).join("");
 }
 
 function renderQueue() {
   const el = $("queue");
   if (!el) return;
+  summary();
   el.innerHTML = queue.map((q, i) => {
+    if (q.dropped) return "";
     const d = q.ref ? drug(q.ref) : null;
     const p = d ? photoOf(d.id) : null;
-    const twin = lookalike(q);
-    const status = { wait: "تنتظر دورها…", busy: "أقصّ الخلفية…", error: "تعذّر قصها." }[q.state] ?? "";
+    const fit = d && !q.sure ? fits(q, d.id) : null;
+    const how = q.how === "barcode" ? "عرفته من الباركود" : q.how === "text" ? "عرفته من الكتابة على العلبة" : "";
+    let body;
+    if (q.saved) {
+      body = `<div class="msg ok"><b>حُفظت${q.auto && q.how !== "added" ? " تلقائيًا" : ""}</b> لـ «${esc(d ? title(d) : "")}»${how ? ` (${how})` : ""}. تصل إلى الصيدليات خلال يوم.</div>
+        <div class="actions"><button class="btn ghost" data-undo>تراجع</button></div>`;
+    } else if (q.busy === "read") {
+      body = `<div class="note">أقرأ العلبة…</div>`;
+    } else if (q.same) {
+      body = `<div class="msg ok">هذه الصورة نفسها موجودة أصلًا لـ «${esc(title(d))}». لا حاجة لها.</div>
+        <div class="actions"><button class="btn ghost" data-drop>أزلها من هنا</button><button class="btn ghost" data-change>ليس هذا الدواء</button></div>`;
+    } else if (d) {
+      body = `<div class="row" style="margin-top:4px"><div class="main"><div class="name" dir="auto">${esc(title(d))}</div><div class="meta">${esc(subtitle(d))}${how ? ` · ${how}` : ""}</div></div>
+          <button class="btn ghost small" data-change>ليس هذا الدواء</button></div>
+        ${fit === false ? `<div class="msg warn">الكتابة على العلبة لا تشبه اسم هذا الدواء. تأكّد أنه الصحيح.</div>` : ""}
+        ${q.twin ? `<div class="msg warn">هذه الصورة تشبه صورة «${esc(title(q.twin))}». تأكّد أنها لهذا الدواء.</div>` : ""}
+        ${q.out?.notes?.length ? `<div class="note">${q.out.notes.map(esc).join("<br>")}</div>` : ""}
+        ${q.busy ? `<div class="note">أقصّ الخلفية…</div>`
+          : p ? `<div class="msg warn"><b>لهذا الدواء صورة من قبل</b> (${p.source === "panel" ? "أضفتها من اللوحة" : "من حزمة الصور"}). قارن، ثم اختر.</div>
+              <div class="actions"><button class="btn" data-save>استبدلها بالجديدة</button><button class="btn ghost" data-drop>أبقِ الحالية</button></div>`
+          : `<div class="actions"><button class="btn" data-save>احفظ الصورة</button><button class="btn ghost" data-drop>أزلها من هنا</button></div>`}`;
+    } else {
+      const sug = q.suggest.length;
+      body = `${q.several ? `<div class="msg warn">في الصورة أكثر من دواء بالاسم نفسه. اختر الذي تريد الصورة له.</div>`
+          : sug ? `<div class="msg warn">لست متأكدًا من الدواء. هل هو أحد هذه؟</div>`
+          : `<div class="msg err">لم أجد هذا الدواء في القائمة${q.read?.lines?.length ? "" : " (لم أستطع قراءة العلبة)"}.</div>`}
+        ${sug ? `<div class="list picks">${pickList(q.suggest)}</div>` : ""}
+        <div class="actions"><button class="btn${sug ? " ghost" : ""}" data-add>ليس في القائمة؟ أضفه الآن</button><button class="btn ghost" data-drop>أزلها من هنا</button></div>
+        <label>أو ابحث عنه</label><input type="search" data-q placeholder="اسم الدواء أو باركوده"><div class="list picks" data-picks></div>`;
+    }
     return `<div class="card qcard" data-i="${i}">
       <div class="qimgs">
         <figure><img src="${q.src}" alt=""><figcaption>الأصلية</figcaption></figure>
-        <figure>${q.outUrl ? `<img src="${q.outUrl}" alt="">` : `<div class="ph">${status}</div>`}<figcaption>الجديدة</figcaption></figure>
-        ${p ? `<figure><img data-photo="${d.id}" alt=""><figcaption>الحالية للدواء</figcaption></figure>` : ""}
+        <figure>${q.outUrl ? `<img src="${q.outUrl}" alt="">` : `<div class="ph">${q.error ? "تعذّر قصها" : "أقصّ الخلفية…"}</div>`}<figcaption>بعد القص</figcaption></figure>
+        ${p && !q.saved ? `<figure><img data-photo="${d.id}" alt=""><figcaption>صورته الحالية</figcaption></figure>` : ""}
       </div>
-      ${q.out?.notes?.length ? `<div class="note">${q.out.notes.map(esc).join("<br>")}</div>` : ""}
-      ${q.state === "done" ? `<label class="tick"><input type="checkbox" data-plain ${q.plain ? "checked" : ""}> القص غير صحيح؟ استعمل الصورة كما هي على خلفية بيضاء</label>` : ""}
-      ${d ? `<div class="row" style="margin-top:8px"><div class="main"><div class="name" dir="auto">${esc(title(d))}</div><div class="meta">${esc(subtitle(d))}</div></div>
-          <button class="btn ghost small" data-change>غيّر الدواء</button></div>`
-        : `<label>لأي دواء هذه الصورة؟</label><input type="search" data-q placeholder="اكتب اسم الدواء أو امسح باركوده"><div class="list picks" data-picks></div>`}
-      ${twin ? `<div class="msg warn">هذه الصورة تشبه صورة «${esc(title(twin))}». تأكّد أنك لم تضعها مرتين.</div>` : ""}
-      ${d && p && q.state === "done" ? `<div class="msg warn"><b>لهذا الدواء صورة من قبل</b> (${p.source === "panel" ? "أضفتها من اللوحة" : "من حزمة الصور"}). قارن، ثم اختر.</div>
-          <div class="actions"><button class="btn" data-save>استبدلها بالجديدة</button><button class="btn ghost" data-drop>أبقِ الحالية</button></div>`
-        : d && q.state === "done" ? `<div class="actions"><button class="btn" data-save>احفظ الصورة</button><button class="btn ghost" data-drop>احذفها من هنا</button></div>`
-        : `<div class="actions"><button class="btn ghost" data-drop>احذفها من هنا</button></div>`}
+      ${q.out && !q.saved && !q.same ? `<label class="tick"><input type="checkbox" data-plain ${q.plain ? "checked" : ""}> القص غير صحيح؟ استعمل الصورة كما هي على خلفية بيضاء</label>` : ""}
+      ${body}
     </div>`;
   }).join("") || `<div class="card empty">انتهت الصور.</div>`;
   el.querySelectorAll(".qcard").forEach((card) => {
     const q = queue[Number(card.dataset.i)];
-    const search_ = card.querySelector("[data-q]");
-    if (search_) {
-      search_.oninput = () => {
-        const res = search(search_.value, 6);
+    const choose = (id) => { q.ref = id; q.fixed = true; q.sure = false; q.how = "chosen"; q.same = samePhoto(q); q.twin = lookalike(q); renderQueue(); };
+    card.querySelectorAll("[data-pick]").forEach((p) => (p.onclick = () => choose(Number(p.dataset.pick))));
+    const box = card.querySelector("[data-q]");
+    if (box) {
+      box.oninput = () => {
         const picks = card.querySelector("[data-picks]");
-        picks.innerHTML = res.map((r, j) => `<div class="row hit" data-j="${j}"><img class="thumb small nophoto" data-photo="${r.id}" alt="">
-          <div class="main"><div class="name" dir="auto">${esc(title(r))}</div><div class="meta">${esc(subtitle(r))}${photoOf(r.id) ? "" : " · بلا صورة"}</div></div></div>`).join("");
-        picks.querySelectorAll("[data-j]").forEach((p) => (p.onclick = () => { q.ref = res[Number(p.dataset.j)].id; renderQueue(); }));
+        picks.innerHTML = pickList(search(box.value, 6).map((r) => r.id));
+        picks.querySelectorAll("[data-pick]").forEach((p) => (p.onclick = () => choose(Number(p.dataset.pick))));
         lazyPhotos(picks);
       };
     }
-    card.querySelector("[data-change]")?.addEventListener("click", () => { q.ref = null; renderQueue(); });
-    card.querySelector("[data-drop]")?.addEventListener("click", () => { queue.splice(queue.indexOf(q), 1); renderQueue(); });
-    card.querySelector("[data-save]")?.addEventListener("click", () => savePhoto(q));
-    card.querySelector("[data-plain]")?.addEventListener("change", async (e) => {
-      q.plain = e.target.checked; q.state = "wait"; renderQueue(); work();
+    card.querySelector("[data-change]")?.addEventListener("click", () => { q.ref = null; q.sure = false; q.same = false; q.twin = null; renderQueue(); });
+    card.querySelector("[data-drop]")?.addEventListener("click", () => { q.dropped = true; renderQueue(); });
+    card.querySelector("[data-save]")?.addEventListener("click", async () => { await savePhoto(q); renderQueue(); });
+    card.querySelector("[data-add]")?.addEventListener("click", () => addFromBox(q));
+    card.querySelector("[data-undo]")?.addEventListener("click", async () => {
+      const j = await ctx.call("undo", { change: q.saved });
+      if (!j.ok) return ctx.toast(j.error === "newer_change" ? "هناك تغيير أحدث لهذا الدواء: تراجع عنه من «آخر ما أضفته»." : "لم يتم التراجع. حاول مرة أخرى.");
+      q.saved = null; q.auto = false; q.sure = false; q.fixed = true;
+      await loadChanges();
+      refresh();
+      renderQueue();
     });
+    card.querySelector("[data-plain]")?.addEventListener("change", (e) => { q.plain = e.target.checked; cut(q); });
   });
   lazyPhotos(el);
 }
 
-async function savePhoto(q, quiet = false) {
+async function savePhoto(q, auto = false) {
   const d = drug(q.ref);
   const p = photoOf(q.ref);
   const before = p?.source === "panel" ? { source: "panel", change: p.change, data: p.data } : p?.source === "pack" ? { source: "pack" } : null;
   const j = await ctx.call("photo_put", { country: COUNTRY, ref_id: q.ref, image: await toBase64(q.out.blob), dhash: q.out.hash,
-    name: title(d), before });
+    name: title(d), before, note: q.how === "barcode" ? "matched by barcode" : q.how === "text" ? "matched by the box's text" : null });
   if (!j.ok) { ctx.toast("لم تُحفظ الصورة: " + (j.error || "حاول مرة أخرى")); return false; }
-  queue.splice(queue.indexOf(q), 1);
+  q.saved = j.change;
+  q.auto = auto;
   await loadChanges();
-  renderQueue();
   refresh();
-  if (!quiet) ctx.toast(before ? "استُبدلت الصورة. تصل إلى الصيدليات خلال يوم." : "حُفظت الصورة. تصل إلى الصيدليات خلال يوم.");
+  if (!auto) ctx.toast(before ? "استُبدلت الصورة. تصل إلى الصيدليات خلال يوم." : "حُفظت الصورة. تصل إلى الصيدليات خلال يوم.");
   return true;
-}
-
-async function saveAll() {
-  // only the ready ones that don't need a decision (a medicine chosen, and it has no photo yet)
-  const ready = queue.filter((q) => q.state === "done" && q.ref && !photoOf(q.ref) && !lookalike(q));
-  const waiting = queue.length - ready.length;
-  if (!ready.length) return ctx.toast(waiting ? "كل صورة باقية تحتاج قرارك: اختر دواءها، أو قرّر هل تستبدل الصورة الموجودة." : "لا صور جاهزة.");
-  let n = 0;
-  for (const q of ready) if (await savePhoto(q, true)) n++;
-  ctx.toast(`حُفظت ${n} صورة.` + (queue.length ? ` باقي ${queue.length} تحتاج قرارك.` : ""));
 }
 
 // ---------------------------------------------------------------- entry

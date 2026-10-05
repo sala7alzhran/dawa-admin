@@ -1,5 +1,5 @@
-// Box photos cleaned like the photo packs' (background removed, box centred on white, 480 px WebP). The work runs in
-// its own thread (cutout-worker.js), so the panel stays responsive; the model (about 490 MB) is downloaded once and
+// Box photos cleaned like the photo packs' (background removed, box centred on white, 480 px WebP), and their printed
+// text read. The work runs in its own thread (cutout-worker.js), so the panel stays responsive; the model (about 490 MB) is downloaded once and
 // kept by the browser.
 let worker = null;
 let next = 0;
@@ -26,11 +26,18 @@ export const ready = () => ask("ready").catch(() => false);
 /** Loads the model, reporting download progress 0..1; resolves to where it runs ("webgpu" or "wasm"). */
 export const load = (progress = () => {}) => ask("load", {}, progress);
 
+/** The box's printed text, line by line: { lines: [{ text, confidence, height }], ms } (PaddleOCR, in the same thread). */
+export const read = (file) => ask("read", { file });
+
 /** Cleans one photo: { blob, hash, notes, cut, ms, kind }. [plain] only centres it on white (no model). */
 export const clean = (file, { plain = false } = {}) => ask("clean", { file, plain });
 
-/** How many of the 64 bits differ between two photo hashes (0 = the same picture). */
+/** A photo's 128-bit hash (32 hex digits), the same way the cleaned photos and the packs' are hashed. */
+export const hash = (file) => ask("hash", { file });
+
+/** How many of the bits differ between two photo hashes (0 = the same picture). */
 export function distance(a, b) {
+  if (!a || !b || a.length !== b.length) return Infinity; // hashes of another kind (an older pack or panel photo) say nothing
   let x = BigInt("0x" + a) ^ BigInt("0x" + b), n = 0;
   while (x) { n += Number(x & 1n); x >>= 1n; }
   return n;
