@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src https://lqrplbxlvslehopiczmi.supabase.co; img-src 'self' data: blob: https://lqrplbxlvslehopiczmi.supabase.co; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+<meta name="theme-color" content="#00A898">
+<title>لوحة دوا</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--teal:#00A898;--btn:#00897B;--ink:#0E2F2C;--muted:#5B6F6B;--bg:#F5FAF9;--card:#fff;--line:#E1EBE9;--soft:#E0F5F2;
+--red:#B42318;--redbg:#FDECEA;--amber:#955400;--amberbg:#FFF4E2;--blue:#1F5B9E;--bluebg:#E9F1FB;--grey:#4A5A56;--greybg:#EFF3F2}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:'IBM Plex Sans Arabic',system-ui,sans-serif;font-size:16px;line-height:1.6}
+button,input,select{font:inherit}
+.hidden{display:none!important}
+.wrap{max-width:980px;margin:0 auto;padding:16px 16px 96px}
+.center{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.box{width:100%;max-width:420px;background:var(--card);border:1px solid var(--line);border-radius:24px;padding:28px}
+.logo{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.logo .tile{width:44px;height:44px;border-radius:14px;background:var(--teal);display:flex;align-items:center;justify-content:center}
+.logo .tile img{width:26px;height:26px}
+.logo b{font-size:20px;font-weight:600}
+h1{font-size:22px;margin:0 0 6px;font-weight:600}
+h2{font-size:18px;margin:22px 0 10px;font-weight:600}
+p.sub{color:var(--muted);margin:0 0 18px}
+label{display:block;font-size:14px;color:var(--muted);margin:12px 0 6px}
+input[type=email],input[type=password],input[type=text],input[type=search],select{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:#fff;color:var(--ink);outline:none}
+input:focus,select:focus{border-color:var(--btn);box-shadow:0 0 0 3px var(--soft)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:14px;padding:12px 18px;background:var(--btn);color:#fff;font-weight:500;cursor:pointer;min-height:46px}
+.btn.wide{width:100%;margin-top:16px}
+.btn.ghost{background:#fff;color:var(--btn);border:1px solid var(--line)}
+.btn.danger{background:var(--red)}
+.btn.small{min-height:38px;padding:8px 14px;font-size:14px}
+.btn:disabled{opacity:.5;cursor:default}
+.msg{margin-top:14px;padding:12px 14px;border-radius:14px;font-size:14px}
+.msg.ok{background:var(--soft);color:var(--btn)}
+.msg.err{background:var(--redbg);color:var(--red)}
+.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+.top .wrap{padding-top:10px;padding-bottom:10px;display:flex;align-items:center;gap:12px}
+.top .logo{margin:0}
+.top .sp{flex:1}
+.tabs{display:flex;gap:6px}
+.tab{border:0;background:none;padding:8px 12px;border-radius:12px;color:var(--muted);cursor:pointer;font-weight:500}
+.tab.on{background:var(--soft);color:var(--btn)}
+.bottom{display:none}
+@media (max-width:720px){
+ .top .tabs{display:none}
+ .bottom{display:flex;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);padding:6px 6px calc(6px + env(safe-area-inset-bottom));z-index:6}
+ .bottom .tab{flex:1;display:flex;flex-direction:column;align-items:center;font-size:13px;padding:6px}
+}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px 16px;cursor:pointer;text-align:start}
+.stat .n{font-size:28px;font-weight:600}
+.stat .l{color:var(--muted);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px 16px}
+.list{display:flex;flex-direction:column;gap:10px}
+.row{display:flex;align-items:center;gap:12px;cursor:pointer}
+.row .main{flex:1;min-width:0}
+.row .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .meta{color:var(--muted);font-size:13px}
+.pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:13px;font-weight:500;white-space:nowrap}
+.p-trial{background:var(--bluebg);color:var(--blue)} .p-sub{background:var(--soft);color:var(--btn)}
+.p-ended{background:var(--amberbg);color:var(--amber)} .p-stop{background:var(--redbg);color:var(--red)} .p-exp{background:var(--greybg);color:var(--grey)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer;font-size:14px}
+.chip.on{background:var(--btn);border-color:var(--btn);color:#fff}
+.empty{color:var(--muted);text-align:center;padding:30px 10px}
+.sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:20;display:flex;align-items:flex-end;justify-content:center}
+@media (min-width:721px){.sheet-bg{align-items:center}}
+.sheet{background:var(--bg);width:100%;max-width:560px;max-height:92vh;overflow:auto;border-radius:24px 24px 0 0;padding:20px}
+@media (min-width:721px){.sheet{border-radius:24px}}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);font-size:15px}
+.kv:last-child{border-bottom:0}
+.kv .k{color:var(--muted)} .kv .v{text-align:start;direction:ltr;unicode-bidi:plaintext}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.actions .btn{width:100%}
+.note{color:var(--muted);font-size:13px;margin-top:8px}
+.toast{position:fixed;bottom:84px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:12px 18px;border-radius:14px;z-index:40;max-width:90vw;font-size:14px}
+.logrow{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.logrow:last-child{border-bottom:0}
+.logrow .t{color:var(--muted);font-size:13px;white-space:nowrap}
+</style>
+</head>
+<body>
+
+<!-- 1. sign in with the link sent to Gmail -->
+<section id="s-email" class="center hidden">
+  <div class="box">
+    <div class="logo"><div class="tile"><img src="icon-white.svg" alt=""></div><b>لوحة دوا</b></div>
+    <h1>تسجيل الدخول</h1>
+    <p class="sub">اكتب بريدك، فيصلك رابط دخول. افتح الرابط على هذا الجهاز.</p>
+    <label for="email">البريد الإلكتروني</label>
+    <input id="email" type="email" autocomplete="email" placeholder="name@gmail.com" dir="ltr">
+    <button id="send" class="btn wide">أرسل رابط الدخول</button>
+    <div id="email-msg" class="msg hidden"></div>
+  </div>
+</section>
+
+<!-- 2. then the panel's own password (made the first time) -->
+<section id="s-pass" class="center hidden">
+  <div class="box">
+    <div class="logo"><div class="tile"><img src="icon-white.svg" alt=""></div><b>لوحة دوا</b></div>
+    <div id="pass-new" class="hidden">
+      <h1>ضع كلمة سر للوحة</h1>
+      <p class="sub">تحتاجها مع رابط البريد في كل دخول. 8 أحرف على الأقل، ولا تستعمل كلمة سر بريدك.</p>
+      <label for="np1">كلمة السر</label><input id="np1" type="password" autocomplete="new-password">
+      <label for="np2">أعد كتابتها</label><input id="np2" type="password" autocomplete="new-password">
+      <button id="setpw" class="btn wide">احفظ وادخل</button>
+    </div>
+    <div id="pass-old" class="hidden">
+      <h1>كلمة السر</h1>
+      <p class="sub">الخطوة الثانية للدخول.</p>
+      <label for="pw">كلمة سر اللوحة</label><input id="pw" type="password" autocomplete="current-password">
+      <button id="login" class="btn wide">ادخل</button>
+    </div>
+    <div id="pass-msg" class="msg hidden"></div>
+    <button id="other" class="btn ghost wide">الدخول ببريد آخر</button>
+  </div>
+</section>
+
+<!-- 3. the panel -->
+<section id="s-app" class="hidden">
+  <div class="top"><div class="wrap">
+    <div class="logo"><div class="tile"><img src="icon-white.svg" alt=""></div><b>لوحة دوا</b></div>
+    <div class="sp"></div>
+    <nav class="tabs">
+      <button class="tab" data-v="home">الرئيسية</button>
+      <button class="tab" data-v="ph">الصيدليات</button>
+      <button class="tab" data-v="log">السجل</button>
+      <button class="tab" data-v="me">الإعدادات</button>
+    </nav>
+  </div></div>
+  <div class="wrap">
+    <div id="v-home">
+      <h1>الرئيسية</h1>
+      <p class="sub" id="home-sub"></p>
+      <div class="grid" id="stats"></div>
+      <h2>تحتاج انتباهك</h2>
+      <div class="list" id="attention"></div>
+    </div>
+    <div id="v-ph" class="hidden">
+      <h1>الصيدليات</h1>
+      <input id="q" type="search" placeholder="ابحث بالاسم أو الرقم أو المحافظة">
+      <div class="chips" id="filters"></div>
+      <div class="list" id="phlist"></div>
+    </div>
+    <div id="v-log" class="hidden">
+      <h1>السجل</h1>
+      <p class="sub">كل ما فُعل من هذه اللوحة، الأحدث أولًا.</p>
+      <div class="card" id="logs"></div>
+    </div>
+    <div id="v-me" class="hidden">
+      <h1>الإعدادات</h1>
+      <div class="card">
+        <h2 style="margin-top:4px">تغيير كلمة السر</h2>
+        <label for="cp0">كلمة السر الحالية</label><input id="cp0" type="password" autocomplete="current-password">
+        <label for="cp1">كلمة السر الجديدة</label><input id="cp1" type="password" autocomplete="new-password">
+        <button id="chpw" class="btn wide">غيّر كلمة السر</button>
+      </div>
+      <button id="logout" class="btn ghost wide">تسجيل الخروج</button>
+      <p class="note">للأمان: تنتهي الجلسة وحدها بعد 12 ساعة، وتُقفل اللوحة ساعة بعد 5 محاولات خاطئة.</p>
+    </div>
+  </div>
+  <nav class="bottom">
+    <button class="tab" data-v="home">الرئيسية</button>
+    <button class="tab" data-v="ph">الصيدليات</button>
+    <button class="tab" data-v="log">السجل</button>
+    <button class="tab" data-v="me">الإعدادات</button>
+  </nav>
+</section>
+
+<div id="sheet" class="sheet-bg hidden"><div class="sheet" id="sheet-body"></div></div>
+<div id="toast" class="toast hidden"></div>
+
+<script type="module">
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
+
+const URL_ = "https://lqrplbxlvslehopiczmi.supabase.co";
+const KEY = "sb_publishable_Kaj0gTFO9WDDhRVTjFq_ow_Y-PEA5kQ";
+const FN = URL_ + "/functions/v1/admin";
+const sb = createClient(URL_, KEY, { auth: { flowType: "implicit", detectSessionInUrl: true, persistSession: true } });
+const $ = (id) => document.getElementById(id);
+
+const GOV = { damascus: "دمشق", rif_dimashq: "ريف دمشق", aleppo: "حلب", homs: "حمص", hama: "حماة", latakia: "اللاذقية", tartus: "طرطوس",
+  idlib: "إدلب", deir_ez_zor: "دير الزور", raqqa: "الرقة", hasakah: "الحسكة", daraa: "درعا", sweida: "السويداء", quneitra: "القنيطرة" };
+const STATE = {
+  trial: ["في التجربة", "p-trial"], subscribed: ["مشتركة", "p-sub"], trial_ended: ["انتهت التجربة", "p-ended"],
+  expired: ["انتهى الاشتراك", "p-exp"], stopped: ["موقوفة", "p-stop"],
+};
+const ACTION = { activate: "تفعيل", deactivate: "إلغاء التفعيل", extend_trial: "تمديد التجربة", stop: "إيقاف", restore: "إعادة تشغيل",
+  login: "دخول إلى اللوحة", login_failed: "كلمة سر خاطئة", set_password: "وضع كلمة السر", change_password: "تغيير كلمة السر" };
+const fmtDate = (d) => new Intl.DateTimeFormat("ar-SY-u-nu-latn", { day: "numeric", month: "long", year: "numeric" }).format(d);
+const fmtDay = (day) => fmtDate(new Date(day * 86400000));
+const fmtTime = (s) => new Intl.DateTimeFormat("ar-SY-u-nu-latn", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(s));
+function ago(s) {
+  const m = Math.round((Date.now() - new Date(s).getTime()) / 60000);
+  if (m < 60) return m <= 1 ? "الآن" : `قبل ${m} دقيقة`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `قبل ${h} ساعة`;
+  return `قبل ${Math.round(h / 24)} يوم`;
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function show(id) { for (const s of ["s-email", "s-pass", "s-app"]) $(s).classList.toggle("hidden", s !== id); }
+function msg(el, text, ok) { el.textContent = text; el.className = "msg " + (ok ? "ok" : "err"); }
+function toast(text) { const t = $("toast"); t.textContent = text; t.classList.remove("hidden"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add("hidden"), 4500); }
+
+let panel = sessionStorage.getItem("panel") || "";
+let data = { pharmacies: [], today: 0 };
+
+async function call(action, extra = {}) {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { show("s-email"); throw new Error("signin"); }
+  const r = await fetch(FN, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token,
+    apikey: KEY, "x-admin-session": panel }, body: JSON.stringify({ action, ...extra }) });
+  const j = await r.json().catch(() => ({ error: "network" }));
+  if (j.error === "session") { panel = ""; sessionStorage.removeItem("panel"); await route(); throw new Error("session"); }
+  if (j.error === "not_admin") { await sb.auth.signOut(); show("s-email"); msg($("email-msg"), "هذا البريد ليس مدير اللوحة.", false); throw new Error("not_admin"); }
+  return j;
+}
+
+// ---- sign in
+$("send").onclick = async () => {
+  const email = $("email").value.trim();
+  if (!email) return msg($("email-msg"), "اكتب بريدك أولًا.", false);
+  $("send").disabled = true;
+  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname } });
+  $("send").disabled = false;
+  // the same answer whatever the address: the page never tells who the admin is
+  msg($("email-msg"), error && !/signups? not allowed|not found/i.test(error.message) ? "تعذّر الإرسال. حاول بعد دقيقة." :
+    "إن كان هذا بريد المدير، وصله الآن رابط دخول. افتحه على هذا الجهاز.", !error || /signups? not allowed|not found/i.test(error.message));
+};
+$("other").onclick = async () => { await sb.auth.signOut(); panel = ""; sessionStorage.removeItem("panel"); show("s-email"); };
+
+$("setpw").onclick = async () => {
+  const a = $("np1").value, b = $("np2").value;
+  if (a.length < 8) return msg($("pass-msg"), "كلمة السر قصيرة: 8 أحرف على الأقل.", false);
+  if (a !== b) return msg($("pass-msg"), "الكلمتان غير متطابقتين.", false);
+  const j = await call("set_password", { password: a });
+  if (j.session) { panel = j.session; sessionStorage.setItem("panel", panel); await route(); } else msg($("pass-msg"), "لم تُحفظ. حاول مرة أخرى.", false);
+};
+$("login").onclick = async () => {
+  const j = await call("login", { password: $("pw").value });
+  $("pw").value = "";
+  if (j.session) { panel = j.session; sessionStorage.setItem("panel", panel); return route(); }
+  if (j.error === "locked") return msg($("pass-msg"), "أُقفلت اللوحة ساعة بعد محاولات خاطئة كثيرة. حاول بعد " + fmtTime(j.locked_until) + ".", false);
+  msg($("pass-msg"), `كلمة السر غير صحيحة. باقي ${j.left} محاولات قبل إقفال اللوحة ساعة.`, false);
+};
+$("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") $("login").click(); });
+
+async function route() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return show("s-email");
+  if (panel) { show("s-app"); return load(); }
+  const st = await call("status");
+  show("s-pass");
+  $("pass-new").classList.toggle("hidden", st.password_set);
+  $("pass-old").classList.toggle("hidden", !st.password_set);
+  if (st.locked_until) msg($("pass-msg"), "اللوحة مقفلة مؤقتًا بعد محاولات خاطئة. حاول بعد " + fmtTime(st.locked_until) + ".", false);
+  else $("pass-msg").classList.add("hidden");
+}
+
+// ---- the panel
+function view(v) {
+  for (const x of ["home", "ph", "log", "me"]) $("v-" + x).classList.toggle("hidden", x !== v);
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.dataset.v === v));
+  if (v === "log") loadLog();
+  window.scrollTo(0, 0);
+}
+document.querySelectorAll(".tab").forEach((t) => (t.onclick = () => view(t.dataset.v)));
+
+async function load() {
+  const j = await call("pharmacies");
+  data = j;
+  renderHome();
+  renderList();
+  if (!document.querySelector(".tab.on")) view("home");
+}
+
+function pill(p) {
+  const [t, c] = STATE[p.state];
+  let extra = "";
+  if (p.state === "trial") extra = ` · باقٍ ${p.trial_left} يوم`;
+  if (p.state === "subscribed") extra = p.lifetime ? " · مدى الحياة" : ` · حتى ${fmtDay(p.until_day)}`;
+  return `<span class="pill ${c}">${t}${extra}</span>`;
+}
+
+function renderHome() {
+  const ps = data.pharmacies;
+  const count = (s) => ps.filter((p) => p.state === s).length;
+  $("home-sub").textContent = `${ps.length} صيدلية مسجّلة`;
+  const cards = [["all", "كل الصيدليات", ps.length], ["trial", "في التجربة", count("trial")], ["subscribed", "مشتركة", count("subscribed")],
+    ["trial_ended", "انتهت تجربتها", count("trial_ended")], ["stopped", "موقوفة", count("stopped")]];
+  $("stats").innerHTML = cards.map(([k, l, n]) => `<button class="stat" data-f="${k}"><div class="n">${n}</div><div class="l">${l}</div></button>`).join("");
+  $("stats").querySelectorAll(".stat").forEach((b) => (b.onclick = () => { filter = b.dataset.f; renderList(); view("ph"); }));
+  const t = data.today;
+  const att = [
+    ...ps.filter((p) => p.state === "trial" && p.trial_left <= 3).map((p) => [p, `تجربتها تنتهي خلال ${p.trial_left} يوم: تواصل معها`]),
+    ...ps.filter((p) => p.state === "trial_ended").map((p) => [p, "انتهت تجربتها ولم تشترك بعد"]),
+    ...ps.filter((p) => p.state === "subscribed" && !p.lifetime && p.until_day - t <= 30).map((p) => [p, `اشتراكها ينتهي ${fmtDay(p.until_day)}: ذكّرها بالتجديد`]),
+    ...ps.filter((p) => p.state === "expired").map((p) => [p, "انتهى اشتراكها"]),
+  ];
+  $("attention").innerHTML = att.length ? att.map(([p, why], i) => row(p, why, "a" + i)).join("") : `<div class="card empty">لا شيء يحتاج انتباهك الآن.</div>`;
+  bindRows($("attention"), att.map(([p]) => p), "a");
+}
+
+let filter = "all";
+const FILTERS = [["all", "الكل"], ["trial", "في التجربة"], ["subscribed", "مشتركة"], ["trial_ended", "انتهت تجربتها"], ["expired", "انتهى اشتراكها"], ["stopped", "موقوفة"]];
+$("q").oninput = () => renderList();
+function renderList() {
+  $("filters").innerHTML = FILTERS.map(([k, l]) => `<button class="chip ${k === filter ? "on" : ""}" data-f="${k}">${l}</button>`).join("");
+  $("filters").querySelectorAll(".chip").forEach((c) => (c.onclick = () => { filter = c.dataset.f; renderList(); }));
+  const q = $("q").value.trim().toLowerCase();
+  const ps = data.pharmacies.filter((p) => (filter === "all" || p.state === filter) &&
+    (!q || [p.pharmacy, p.phone, GOV[p.governorate], p.email, p.device].some((x) => String(x ?? "").toLowerCase().includes(q))));
+  $("phlist").innerHTML = ps.length ? ps.map((p, i) => row(p, null, "p" + i)).join("") : `<div class="card empty">لا صيدليات هنا.</div>`;
+  bindRows($("phlist"), ps, "p");
+}
+function row(p, why, id) {
+  return `<div class="card row" data-id="${id}"><div class="main"><div class="name">${esc(p.pharmacy || "بلا اسم")}</div>
+    <div class="meta">${esc(GOV[p.governorate] || "")}${p.last_seen ? " · آخر اتصال " + ago(p.last_seen) : ""}</div>
+    ${why ? `<div class="meta" style="color:var(--ink)">${esc(why)}</div>` : ""}</div>${pill(p)}</div>`;
+}
+function bindRows(el, list, prefix) { el.querySelectorAll(".row").forEach((r) => (r.onclick = () => open(list[Number(r.dataset.id.slice(prefix.length))]))); }
+
+// ---- one pharmacy: everything about it, and what can be done
+function wa(phone) {
+  let d = String(phone ?? "").replace(/\D/g, "");
+  if (d.startsWith("00")) d = d.slice(2);
+  if (d.startsWith("0")) d = "963" + d.slice(1);
+  return d ? "https://wa.me/" + d : null;
+}
+function open(p) {
+  const link = wa(p.phone);
+  const kv = (k, v, ltr) => v ? `<div class="kv"><span class="k">${k}</span><span class="v" ${ltr ? "" : 'style="direction:rtl"'}>${esc(v)}</span></div>` : "";
+  const sub = p.state === "subscribed" || p.state === "expired";
+  $("sheet-body").innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;justify-content:space-between"><h1 style="margin:0">${esc(p.pharmacy || "بلا اسم")}</h1>
+    <button class="btn ghost small" id="x">إغلاق</button></div>
+    <div style="margin:8px 0 14px">${pill(p)}</div>
+    <div class="card">
+      ${kv("المحافظة", GOV[p.governorate])}${kv("العنوان", p.address)}${kv("الهاتف", p.phone, true)}${kv("البريد", p.email, true)}
+      ${kv("تاريخ التسجيل", fmtDate(new Date(p.first_seen)))}${kv("آخر اتصال", p.last_seen ? ago(p.last_seen) : "")}
+      ${kv("الجوال", p.model, true)}${kv("إصدار التطبيق", p.app_version, true)}${kv("رمز الجهاز", p.device, true)}
+      ${p.revoked_reason ? kv("سبب الإيقاف", p.revoked_reason) : ""}
+    </div>
+    ${link ? `<a class="btn ghost wide" href="${link}" target="_blank" rel="noopener">تواصل على واتساب</a>` : ""}
+    <h2>التفعيل</h2>
+    <div class="actions">
+      <button class="btn" data-a="year">فعّل سنة</button>
+      <button class="btn" data-a="life" ${p.lifetime ? "disabled" : ""}>فعّل مدى الحياة</button>
+      <button class="btn ghost" data-a="month" ${p.lifetime ? "disabled" : ""}>أهدِها شهرًا مجانيًا</button>
+      <button class="btn ghost" data-a="extend" ${sub ? "disabled" : ""}>مدّد التجربة 7 أيام</button>
+    </div>
+    <p class="note">التفعيل يصل إلى جوال الصيدلية عند اتصالها التالي (خلال 12 ساعة)، أو فورًا إن ضغطت «تحقّق الآن» في تطبيقها. لا حاجة لأي كود.</p>
+    <h2>الإيقاف</h2>
+    <div class="actions">
+      ${p.state === "stopped" ? `<button class="btn" data-a="restore">أعد تشغيلها</button>` : `<button class="btn danger" data-a="stop">أوقفها</button>`}
+      ${sub ? `<button class="btn ghost" data-a="deactivate">ألغِ آخر تفعيل</button>` : ""}
+    </div>
+    <p class="note">الإيقاف يُقفل أدوات البيع عندها عند اتصالها التالي، وتبقى بياناتها محفوظة وتستطيع رؤيتها.</p>`;
+  $("sheet").classList.remove("hidden");
+  $("x").onclick = close;
+  $("sheet-body").querySelectorAll("[data-a]").forEach((b) => (b.onclick = () => act(p, b.dataset.a)));
+}
+function close() { $("sheet").classList.add("hidden"); }
+$("sheet").onclick = (e) => { if (e.target.id === "sheet") close(); };
+
+async function act(p, a) {
+  const name = p.pharmacy || "هذه الصيدلية";
+  const base = Math.max(data.today, p.until_day ?? data.today);
+  const text = {
+    year: `ستُفعَّل «${name}» سنة كاملة، حتى ${fmtDay(base + 365)}.`,
+    life: `ستُفعَّل «${name}» مدى الحياة.`,
+    month: `ستُهدى «${name}» شهرًا مجانيًا، حتى ${fmtDay(base + 30)}.`,
+    extend: `ستُمدَّد تجربة «${name}» 7 أيام.`,
+    stop: `ستُوقف أدوات «${name}» عند اتصالها التالي.`,
+    restore: `ستُعاد أدوات «${name}» للعمل عند اتصالها التالي.`,
+    deactivate: `سيُلغى آخر تفعيل لـ«${name}». استعمله فقط إن فعّلتها بالخطأ.`,
+  }[a];
+  let reason = "";
+  if (a === "stop") { reason = prompt(text + "\n\nاكتب السبب (يبقى في السجل):", ""); if (reason === null) return; }
+  else if (!confirm(text + "\n\nمتأكد؟")) return;
+  const map = { year: ["activate", { plan: "year" }], life: ["activate", { plan: "life" }], month: ["activate", { plan: "month" }],
+    extend: ["extend_trial", { days: 7 }], stop: ["stop", { reason }], restore: ["restore", {}], deactivate: ["deactivate", {}] };
+  const [action, extra] = map[a];
+  const j = await call(action, { device: p.device, ...extra });
+  if (j.ok) {
+    toast("تم. يصل إلى جوال الصيدلية عند اتصالها التالي.");
+    close();
+    await load();
+  } else toast(j.error === "already_lifetime" ? "هذه الصيدلية مفعّلة مدى الحياة أصلًا." : "لم يتم. حاول مرة أخرى.");
+}
+
+async function loadLog() {
+  const j = await call("log");
+  const names = Object.fromEntries(data.pharmacies.map((p) => [p.device, p.pharmacy]));
+  $("logs").innerHTML = j.log.length ? j.log.map((l) => {
+    const who = l.device_code ? (names[l.device_code] || l.details?.pharmacy || l.device_code) : "";
+    let d = "";
+    if (l.action === "activate") d = l.details?.plan === "FULL" ? "مدى الحياة" : l.details?.kind === "month" ? "شهر مجاني" : "سنة";
+    if (l.action === "extend_trial") d = `${l.details?.days} أيام`;
+    if (l.action === "stop" && l.details?.reason) d = l.details.reason;
+    return `<div class="logrow"><div class="t">${fmtTime(l.at)}</div><div>${ACTION[l.action] || esc(l.action)}${who ? " · " + esc(who) : ""}${d ? " · " + esc(d) : ""}</div></div>`;
+  }).join("") : `<div class="empty">لا شيء بعد.</div>`;
+}
+
+$("chpw").onclick = async () => {
+  if ($("cp1").value.length < 8) return toast("كلمة السر الجديدة قصيرة: 8 أحرف على الأقل.");
+  const j = await call("change_password", { old: $("cp0").value, password: $("cp1").value });
+  $("cp0").value = $("cp1").value = "";
+  toast(j.ok ? "غُيّرت كلمة السر." : "كلمة السر الحالية غير صحيحة.");
+};
+$("logout").onclick = async () => { panel = ""; sessionStorage.removeItem("panel"); await sb.auth.signOut(); show("s-email"); };
+
+sb.auth.onAuthStateChange((event) => { if (event === "SIGNED_IN") route(); });
+route();
+</script>
+</body>
+</html>
