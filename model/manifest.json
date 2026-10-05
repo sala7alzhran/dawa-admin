@@ -1,0 +1,32 @@
+{
+ "model": "BiRefNet (onnx-community/BiRefNet-ONNX, model_fp16.onnx), joins split for browser graphics cards",
+ "licence": "MIT, https://github.com/ZhengPeng7/BiRefNet",
+ "bytes": 489736455,
+ "sha256": "499100a62dd5d58e741f6968a1dc0b10e58c97758cc35c24143d8b957910461f",
+ "parts": [
+  {
+   "path": "birefnet_fp16.part1",
+   "bytes": 94371840
+  },
+  {
+   "path": "birefnet_fp16.part2",
+   "bytes": 94371840
+  },
+  {
+   "path": "birefnet_fp16.part3",
+   "bytes": 94371840
+  },
+  {
+   "path": "birefnet_fp16.part4",
+   "bytes": 94371840
+  },
+  {
+   "path": "birefnet_fp16.part5",
+   "bytes": 94371840
+  },
+  {
+   "path": "birefnet_fp16.part6",
+   "bytes": 17877255
+  }
+ ]
+}

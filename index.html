@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src https://lqrplbxlvslehopiczmi.supabase.co; img-src 'self' data: blob: https://lqrplbxlvslehopiczmi.supabase.co; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://lqrplbxlvslehopiczmi.supabase.co https://cdn.jsdelivr.net https://raw.githubusercontent.com; img-src 'self' data: blob: https://lqrplbxlvslehopiczmi.supabase.co; worker-src 'self' blob:; base-uri 'none'; form-action 'none';">
 <meta name="theme-color" content="#00A898">
 <title>لوحة دوا</title>
 <link rel="manifest" href="manifest.json">
@@ -83,6 +83,32 @@ input:focus,select:focus{border-color:var(--btn);box-shadow:0 0 0 3px var(--soft
 .toast{position:fixed;bottom:84px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:12px 18px;border-radius:14px;z-index:40;max-width:90vw;font-size:14px}
 .logrow{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
 .logrow:last-child{border-bottom:0}
+.msg.warn{background:var(--amberbg);color:var(--amber)}
+.thumb{width:56px;height:56px;border-radius:12px;border:1px solid var(--line);background:#fff;object-fit:contain;flex:none}
+.thumb.small{width:40px;height:40px;border-radius:10px}
+.thumb.nophoto{background:var(--greybg)}
+.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.badges .pill{font-size:12px;padding:1px 8px}
+.photo-big{background:#fff;border:1px solid var(--line);border-radius:18px;aspect-ratio:1;max-width:320px;margin:0 auto;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.photo-big img{width:100%;height:100%;object-fit:contain}
+.form{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+.form .full{grid-column:1/-1}
+.cmp{width:100%;border-collapse:collapse;font-size:14px;margin:10px 0;table-layout:fixed}
+.cmp td{padding:7px 4px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+.cmp td.k{color:var(--muted);width:30%}
+.cmp .diff{background:var(--amberbg);color:var(--amber);padding:1px 6px;border-radius:6px}
+.muted{color:var(--muted)}
+.hit{padding:8px 0;border-bottom:1px solid rgba(0,0,0,.06)}
+.hit:last-child{border-bottom:0}
+.msg .row .name{color:var(--ink)}
+.qcard figure{margin:0;flex:1;min-width:0;text-align:center}
+.qimgs{display:flex;gap:10px}
+.qimgs img,.qimgs .ph{width:100%;aspect-ratio:1;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:12px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px}
+.qcard figcaption{font-size:12px;color:var(--muted);margin-top:4px}
+.tick{display:flex;align-items:center;gap:8px;color:var(--ink)}
+.dlg{z-index:30}
+.wide-sheet .sheet{max-width:760px}
+a{color:var(--btn)}
 .logrow .t{color:var(--muted);font-size:13px;white-space:nowrap}
 </style>
 </head>
@@ -131,6 +157,7 @@ input:focus,select:focus{border-color:var(--btn);box-shadow:0 0 0 3px var(--soft
     <nav class="tabs">
       <button class="tab" data-v="home">الرئيسية</button>
       <button class="tab" data-v="ph">الصيدليات</button>
+      <button class="tab" data-v="med">الأدوية</button>
       <button class="tab" data-v="log">السجل</button>
       <button class="tab" data-v="me">الإعدادات</button>
     </nav>
@@ -148,6 +175,10 @@ input:focus,select:focus{border-color:var(--btn);box-shadow:0 0 0 3px var(--soft
       <input id="q" type="search" placeholder="ابحث بالاسم أو الرقم أو المحافظة">
       <div class="chips" id="filters"></div>
       <div class="list" id="phlist"></div>
+    </div>
+    <div id="v-med" class="hidden">
+      <h1>الأدوية والصور</h1>
+      <div id="med-body"></div>
     </div>
     <div id="v-log" class="hidden">
       <h1>السجل</h1>
@@ -169,6 +200,7 @@ input:focus,select:focus{border-color:var(--btn);box-shadow:0 0 0 3px var(--soft
   <nav class="bottom">
     <button class="tab" data-v="home">الرئيسية</button>
     <button class="tab" data-v="ph">الصيدليات</button>
+    <button class="tab" data-v="med">الأدوية</button>
     <button class="tab" data-v="log">السجل</button>
     <button class="tab" data-v="me">الإعدادات</button>
   </nav>
@@ -179,6 +211,7 @@ input:focus,select:focus{border-color:var(--btn);box-shadow:0 0 0 3px var(--soft
 
 <script type="module">
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
+import { initCatalog } from "./catalog.js";
 
 const URL_ = "https://lqrplbxlvslehopiczmi.supabase.co";
 const KEY = "sb_publishable_Kaj0gTFO9WDDhRVTjFq_ow_Y-PEA5kQ";
@@ -193,7 +226,8 @@ const STATE = {
   expired: ["انتهى الاشتراك", "p-exp"], stopped: ["موقوفة", "p-stop"],
 };
 const ACTION = { activate: "تفعيل", deactivate: "إلغاء التفعيل", extend_trial: "تمديد التجربة", stop: "إيقاف", restore: "إعادة تشغيل",
-  login: "دخول إلى اللوحة", login_failed: "كلمة سر خاطئة", set_password: "وضع كلمة السر", change_password: "تغيير كلمة السر" };
+  login: "دخول إلى اللوحة", login_failed: "كلمة سر خاطئة", set_password: "وضع كلمة السر", change_password: "تغيير كلمة السر",
+  drug_add: "إضافة دواء", drug_change: "تعديل دواء", photo_add: "إضافة صورة", photo_change: "استبدال صورة", undo: "تراجع" };
 const fmtDate = (d) => new Intl.DateTimeFormat("ar-SY-u-nu-latn", { day: "numeric", month: "long", year: "numeric" }).format(d);
 const fmtDay = (day) => fmtDate(new Date(day * 86400000));
 const fmtTime = (s) => new Intl.DateTimeFormat("ar-SY-u-nu-latn", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(s));
@@ -211,6 +245,7 @@ function msg(el, text, ok) { el.textContent = text; el.className = "msg " + (ok 
 function toast(text) { const t = $("toast"); t.textContent = text; t.classList.remove("hidden"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add("hidden"), 4500); }
 
 let panel = sessionStorage.getItem("panel") || "";
+const catalog = initCatalog({ call: (a, x) => call(a, x), toast: (t) => toast(t), esc: (t) => esc(t) });
 let data = { pharmacies: [], today: 0 };
 
 async function call(action, extra = {}) {
@@ -267,9 +302,10 @@ async function route() {
 
 // ---- the panel
 function view(v) {
-  for (const x of ["home", "ph", "log", "me"]) $("v-" + x).classList.toggle("hidden", x !== v);
+  for (const x of ["home", "ph", "med", "log", "me"]) $("v-" + x).classList.toggle("hidden", x !== v);
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.dataset.v === v));
   if (v === "log") loadLog();
+  if (v === "med") catalog.open();
   window.scrollTo(0, 0);
 }
 document.querySelectorAll(".tab").forEach((t) => (t.onclick = () => view(t.dataset.v)));
@@ -406,6 +442,7 @@ async function loadLog() {
     if (l.action === "activate") d = l.details?.plan === "FULL" ? "مدى الحياة" : l.details?.kind === "month" ? "شهر مجاني" : "سنة";
     if (l.action === "extend_trial") d = `${l.details?.days} أيام`;
     if (l.action === "stop" && l.details?.reason) d = l.details.reason;
+    if (l.details?.name) d = [l.details.name, l.details.strength].filter(Boolean).join(" ");
     return `<div class="logrow"><div class="t">${fmtTime(l.at)}</div><div>${ACTION[l.action] || esc(l.action)}${who ? " · " + esc(who) : ""}${d ? " · " + esc(d) : ""}</div></div>`;
   }).join("") : `<div class="empty">لا شيء بعد.</div>`;
 }
