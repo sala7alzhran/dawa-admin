@@ -7,7 +7,8 @@ const waiting = new Map();
 
 function ask(type, extra = {}, onProgress) {
   if (!worker) {
-    worker = new Worker(new URL("./cutout-worker.js", import.meta.url), { type: "module" });
+    // the worker of this same version of the panel (its ?v=…)
+    worker = new Worker(new URL("./cutout-worker.js" + new URL(import.meta.url).search, import.meta.url), { type: "module" });
     worker.onmessage = ({ data }) => {
       const w = waiting.get(data.id);
       if (!w) return;
