@@ -31,7 +31,11 @@ export const load = (progress = () => {}) => ask("load", {}, progress);
 export const read = (file) => ask("read", { file });
 
 /** Cleans one photo: { blob, hash, notes, cut, ms, kind }. [plain] only centres it on white (no model). */
-export const clean = (file, { plain = false } = {}) => ask("clean", { file, plain });
+/**
+ * [seeds]: where each box of a photo of several is ([{ pos: [[x, y]], neg: [[x, y]] }], the photo's pixels), with the
+ * text read on it ([lines]): then also { pieces: [{ blob, hash, notes, cut, lines }] }, each box on its own.
+ */
+export const clean = (file, { plain = false, seeds = [], lines = [] } = {}) => ask("clean", { file, plain, seeds, lines });
 
 /** A photo's 128-bit hash (32 hex digits), the same way the cleaned photos and the packs' are hashed. */
 export const hash = (file) => ask("hash", { file });
@@ -43,3 +47,4 @@ export function distance(a, b) {
   while (x) { n += Number(x & 1n); x >>= 1n; }
   return n;
 }
+

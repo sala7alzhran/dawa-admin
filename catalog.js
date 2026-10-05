@@ -524,7 +524,9 @@ function boxMatcher() {
   const rows = all("SELECT id, brand, composition, strength, form_code, pack_count, maker, maker_short FROM drugs");
   const cands = rows.map((d) => BM.candidate({ id: d.id, brand: d.brand, ingredient: d.composition, strength: d.strength, formCode: d.form_code,
     packCount: d.pack_count, makerKey: d.maker_short || d.maker, makerLatin: latin.get(d.maker_short || d.maker) ?? [] }));
-  matcher = { index: new BM.Index(cands, [...latin.entries()]), byId: new Map(cands.map((c) => [c.id, c])), makers };
+  const family = new Map();
+  for (const c of cands) { const f = c.brandWords[0]; if (f) { if (!family.has(f)) family.set(f, []); family.get(f).push(c); } }
+  matcher = { index: new BM.Index(cands, [...latin.entries()]), byId: new Map(cands.map((c) => [c.id, c])), makers, family };
   return matcher;
 }
 
@@ -536,7 +538,7 @@ const NOT_A_NAME = /^(R\s*X|R\s*-?\s*ONLY|RONLY|PRESCRIPTION.*|FOOD SUPPLEMENT|F
 let queue = [];
 let bgEl = null;
 
-const done = (q) => q.saved || q.dropped || q.same;
+const done = (q) => q.saved || q.dropped || q.same || q.heading;
 const unsaved = () => queue.filter((q) => !done(q)).length;
 
 function batch(files, ref = null) {
@@ -565,10 +567,23 @@ function guard(e) { if (unsaved()) { e.preventDefault(); e.returnValue = ""; } }
 /** What the box says: its medicine if sure, else the closest ones. */
 async function identify(q) {
   const { lines, codes } = await readBox(q.file);
+  decide(q, lines, codes);
+}
+
+function decide(q, lines, codes, among = null) {
   const m = boxMatcher();
   const reading = BM.read(lines);
   q.read = { lines, codes, reading };
   if (q.fixed) return;
+  if (among?.length) {
+    // a box of a group photo: told apart by its strength (or name), so it is one of these; the text picks among them
+    const r = reading.isEmpty ? { matches: [] } : BM.match(reading, among, m.index.vocabulary);
+    const ids = [...new Set([...r.matches.map((x) => x.candidate.id), ...among.map((c) => c.id)])];
+    q.suggest = ids.slice(0, 4);
+    const kinds = new Set(among.map((c) => c.identity));
+    if (kinds.size === 1 || r.confident) { q.ref = r.matches[0]?.candidate.id ?? among[0].id; q.sure = true; q.how = "text"; }
+    return;
+  }
   for (const code of codes) {
     const d = byCode(code);
     if (d) { q.ref = d.id; q.sure = true; q.how = "barcode"; return; }
@@ -579,6 +594,63 @@ async function identify(q) {
   q.several = BM.several(lines, r.matches[0]);
   q.suggest = [...new Set(r.matches.map((x) => x.candidate.id))].slice(0, 4);
   if (r.confident && !q.several) { q.ref = q.suggest[0]; q.sure = true; q.how = "text"; }
+}
+
+/** A strength as the numbers that write it, smallest first ("10/20"): boxes and the list don't always write a
+ * combination in the same order (LOWLIP-PLUS "10/20" on the box, "20/10" in the list). */
+const numbersOf = (list) => [...list].sort((a, b) => a - b).map((v) => String(Math.round(v * 1000) / 1000)).join("/");
+const numbersIn = (text) => numbersOf((text.replace(/(\d),(\d)/g, "$1.$2").match(/\d+(?:\.\d+)?/g) ?? []).map(Number));
+
+/**
+ * Where each box of a photo of several is, from what is printed on them: one seed per box, the lines naming it as
+ * points to take and the other boxes' as points to leave out (cutout's SAM). The boxes are told apart by the
+ * strength the medicine is sold in ("UROMAX10" and "UROMAX5"; "10/20" and "10/40"), else by different medicines'
+ * names ("Artral Mineral" and "Artral MSM"). Fewer than two: a photo of one box.
+ */
+function seedsFor(q) {
+  const lines = (q.read?.lines ?? []).filter((l) => l.x != null);
+  const r = q.read?.result;
+  if (lines.length < 2 || !r?.matches?.length) return [];
+  const groups = new Map();
+  const add = (key, l) => { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(l); };
+  const fam = boxMatcher().family.get(r.matches[0].candidate.brandWords[0]) ?? [];
+  const strengthOf = (c) => numbersOf(c.brandNumbers.length ? c.brandNumbers : c.amounts.map((a) => a.value));
+  const strengths = new Set(fam.map(strengthOf).filter(Boolean));
+  const taken = new Set();
+  for (const l of lines) { const n = numbersIn(l.text); if (n && strengths.has(n)) { add("s" + n, l); taken.add(l); } }
+  // a strength printed over two lines side by side or one under the other ("Coteptal 5" and "1.25")
+  const next = (a, b) => {
+    const gap = Math.max(a.height, b.height);
+    const sameRow = Math.abs(a.y - b.y) <= 0.6 * gap && b.x >= a.x + a.w - 0.5 * gap && b.x - (a.x + a.w) <= 1.5 * gap;
+    const under = b.y > a.y && b.y - (a.y + a.height) <= gap && b.x < a.x + a.w && b.x + b.w > a.x;
+    return sameRow || under;
+  };
+  for (const a of lines) for (const b of lines) {
+    if (a === b || taken.has(a) || taken.has(b) || !next(a, b)) continue;
+    const n = numbersIn(a.text + " " + b.text);
+    if (n && strengths.has(n) && /\d/.test(a.text) && /\d/.test(b.text)) { add("s" + n, a); add("s" + n, b); taken.add(a); taken.add(b); }
+  }
+  const among = (key) => (key[0] === "s" ? fam.filter((c) => strengthOf(c) === key.slice(1))
+    : [...boxMatcher().byId.values()].filter((c) => c.brandJoined === key.slice(1)));
+  if (groups.size < 2) {
+    groups.clear();
+    const names = [...new Set(r.matches.filter((m) => m.found.has("NAME")).map((m) => m.candidate.brandJoined))].slice(0, 5);
+    // the company's name on the box is not a medicine's ("ALFARES" is not ALFARES-K)
+    const makers = boxMatcher().makers.flatMap((m) => m.en.split("|")).map((w) => w.toUpperCase().replace(/[^A-Z]/g, "")).filter((w) => w.length >= 4);
+    if (names.length >= 2) {
+      for (const l of lines) {
+        const t = l.text.toUpperCase().replace(/[^A-Z]/g, "");
+        if (t.length < 4 || makers.some((w) => BM.similarity(w, t) >= 0.85)) continue;
+        const sims = names.map((n) => [n, BM.similarity(n, t)]).sort((a, b) => b[1] - a[1]);
+        if (sims[0][1] >= 0.8 && sims[0][1] - (sims[1]?.[1] ?? 0) >= 0.1) add("n" + sims[0][0], l);
+      }
+    }
+  }
+  if (groups.size < 2) return [];
+  const centre = (l) => [l.x + l.w / 2, l.y + l.height / 2];
+  const all = [...groups.entries()];
+  // the medicines each box can be: those of its strength (or name) — what tells the box apart decides between them
+  return all.map(([key, ls]) => ({ pos: ls.map(centre), neg: all.filter(([o]) => o !== key).flatMap(([, x]) => x).map(centre), cands: among(key) }));
 }
 
 /** Whether the box's text has this medicine's name (null: nothing readable to tell). */
@@ -615,7 +687,7 @@ async function settle(q) {
   q.twin = lookalike(q);
   if (q.same) return;
   const clean = q.out.cut && !q.out.notes.length;
-  if (q.sure && clean && !q.twin && !photoOf(q.ref)) await savePhoto(q, true);
+  if (q.sure && clean && !q.twin && !q.fromGroup && !q.mixed && !photoOf(q.ref)) await savePhoto(q, true);
 }
 
 async function work() {
@@ -635,7 +707,8 @@ async function work() {
     if (state) state.innerHTML = `<div class="msg err">تعذّر تشغيل أداة قص الخلفية في هذا المتصفح. الصور تُحفظ كما هي على خلفية بيضاء.</div>`;
     for (const q of queue) q.plain = true;
   }
-  for (const q of queue) await cut(q);
+  // the photos as chosen (the boxes a group photo is split into come in under it already cut)
+  for (const q of [...queue]) await cut(q);
 }
 
 async function cut(q) {
@@ -643,15 +716,41 @@ async function cut(q) {
   q.busy = "cut";
   renderQueue();
   try {
-    q.out = await Cut.clean(q.file, { plain: !!q.plain });
+    const seeds = q.noSplit || q.fromGroup || q.fixed || q.plain ? [] : q.seeds ?? seedsFor(q);
+    q.seeds = seeds;
+    q.out = await Cut.clean(q.file, { plain: !!q.plain, seeds: seeds.map(({ pos, neg }) => ({ pos, neg })), lines: q.read?.lines ?? [] });
     if (q.outUrl) URL.revokeObjectURL(q.outUrl);
     q.outUrl = URL.createObjectURL(q.out.blob);
     q.error = false;
+    q.mixed = seeds.length >= 2 && !(q.out.pieces?.length >= 2);
   } catch (e) {
     console.error(e);
     q.error = true;
   }
   q.busy = null;
+  if (q.out?.pieces?.length >= 2) group(q);
+  else await settle(q);
+  renderQueue();
+}
+
+/** A photo of several boxes: a heading for it, and each box as a photo of its own just under it. */
+function group(q) {
+  q.heading = true;
+  const kids = q.out.pieces.map((pc, n) => {
+    const k = { file: q.file, src: q.src, out: pc, outUrl: URL.createObjectURL(pc.blob), parent: q, fromGroup: true, n: n + 1, sure: false, suggest: [] };
+    decide(k, pc.lines, [], q.seeds?.[pc.seed]?.cands);
+    k.same = samePhoto(k);
+    return k;
+  });
+  for (const k of kids) k.twin = lookalike(k);
+  q.kids = kids;
+  queue.splice(queue.indexOf(q) + 1, 0, ...kids);
+}
+
+/** Back to one photo: the boxes taken away, the photo decided as a whole. */
+async function ungroup(q) {
+  for (const k of q.kids ?? []) { const i = queue.indexOf(k); if (i >= 0) queue.splice(i, 1); }
+  q.kids = null; q.heading = false; q.noSplit = true;
   await settle(q);
   renderQueue();
 }
@@ -720,6 +819,14 @@ function renderQueue() {
   summary();
   el.innerHTML = queue.map((q, i) => {
     if (q.dropped) return "";
+    if (q.heading) {
+      const ready = (q.kids ?? []).filter((k) => !done(k) && k.ref && k.sure && !photoOf(k.ref) && !k.twin).length;
+      return `<div class="card qcard group" data-i="${i}">
+        <div class="qimgs"><figure><img src="${q.src}" alt=""><figcaption title="${esc(q.file.name)}">الصورة كما رفعتها</figcaption></figure></div>
+        <div class="msg ok"><b>في هذه الصورة ${q.kids.length} علب، فصلتها.</b> كل علبة في بطاقة تحتها، عرفتُ دواءها من الكتابة عليها. راجعها ثم احفظ.</div>
+        <div class="actions">${ready ? `<button class="btn" data-saveall>احفظ ما عرفته (${ready})</button>` : ""}<button class="btn ghost" data-ungroup>لا تفصلها، اعتبرها صورة واحدة</button></div>
+      </div>`;
+    }
     const d = q.ref ? drug(q.ref) : null;
     const p = d ? photoOf(d.id) : null;
     const fit = d && !q.sure ? fits(q, d.id) : null;
@@ -737,6 +844,7 @@ function renderQueue() {
       body = `<div class="row" style="margin-top:4px"><div class="main"><div class="name" dir="auto">${esc(title(d))}</div><div class="meta">${esc(subtitle(d))}${how ? ` · ${how}` : ""}</div></div>
           <button class="btn ghost small" data-change>ليس هذا الدواء</button></div>
         ${fit === false ? `<div class="msg warn">الكتابة على العلبة لا تشبه اسم هذا الدواء. تأكّد أنه الصحيح.</div>` : ""}
+        ${q.mixed ? `<div class="msg warn">يبدو أن في الصورة أكثر من علبة ولم أستطع فصلها. تأكّد أنها لهذا الدواء وحده.</div>` : ""}
         ${q.twin ? `<div class="msg warn">هذه الصورة تشبه صورة «${esc(title(q.twin))}». تأكّد أنها لهذا الدواء.</div>` : ""}
         ${q.out?.notes?.length ? `<div class="note">${q.out.notes.map(esc).join("<br>")}</div>` : ""}
         ${q.busy ? `<div class="note">أقصّ الخلفية…</div>`
@@ -752,13 +860,14 @@ function renderQueue() {
         <div class="actions"><button class="btn${sug ? " ghost" : ""}" data-add>ليس في القائمة؟ أضفه الآن</button><button class="btn ghost" data-drop>أزلها من هنا</button></div>
         <label>أو ابحث عنه</label><input type="search" data-q placeholder="اسم الدواء أو باركوده"><div class="list picks" data-picks></div>`;
     }
-    return `<div class="card qcard" data-i="${i}">
+    return `<div class="card qcard${q.fromGroup ? " part" : ""}" data-i="${i}">
+      ${q.fromGroup ? `<div class="note">العلبة ${q.n} من ${q.parent.kids.length} في الصورة</div>` : ""}
       <div class="qimgs">
-        <figure><img src="${q.src}" alt=""><figcaption>الأصلية</figcaption></figure>
+        ${q.fromGroup ? "" : `<figure><img src="${q.src}" alt=""><figcaption title="${esc(q.file.name)}">الأصلية</figcaption></figure>`}
         <figure>${q.outUrl ? `<img src="${q.outUrl}" alt="">` : `<div class="ph">${q.error ? "تعذّر قصها" : "أقصّ الخلفية…"}</div>`}<figcaption>بعد القص</figcaption></figure>
         ${p && !q.saved ? `<figure><img data-photo="${d.id}" alt=""><figcaption>صورته الحالية</figcaption></figure>` : ""}
       </div>
-      ${q.out && !q.saved && !q.same ? `<label class="tick"><input type="checkbox" data-plain ${q.plain ? "checked" : ""}> القص غير صحيح؟ استعمل الصورة كما هي على خلفية بيضاء</label>` : ""}
+      ${q.out && !q.saved && !q.same && !q.fromGroup ? `<label class="tick"><input type="checkbox" data-plain ${q.plain ? "checked" : ""}> القص غير صحيح؟ استعمل الصورة كما هي على خلفية بيضاء</label>` : ""}
       ${body}
     </div>`;
   }).join("") || `<div class="card empty">انتهت الصور.</div>`;
@@ -788,6 +897,11 @@ function renderQueue() {
       renderQueue();
     });
     card.querySelector("[data-plain]")?.addEventListener("change", (e) => { q.plain = e.target.checked; cut(q); });
+    card.querySelector("[data-ungroup]")?.addEventListener("click", () => ungroup(q));
+    card.querySelector("[data-saveall]")?.addEventListener("click", async () => {
+      for (const k of q.kids.filter((k) => !done(k) && k.ref && k.sure && !photoOf(k.ref) && !k.twin)) await savePhoto(k, true);
+      renderQueue();
+    });
   });
   lazyPhotos(el);
 }

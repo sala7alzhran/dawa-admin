@@ -208,7 +208,7 @@ async function square(source, sx, sy, sw, sh, alpha) {
   return { blob, hash: dhash(c) };
 }
 
-async function clean(file, plain) {
+async function clean(file, plain, seeds = [], lines = []) {
   const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
   const w = bitmap.width, h = bitmap.height;
   const notes = [];
@@ -239,7 +239,128 @@ async function clean(file, plain) {
   const sw = x1 - x0 + 1, sh = y1 - y0 + 1;
   const alpha = new Uint8ClampedArray(sw * sh);
   for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) alpha[y * sw + x] = full[((y + y0) * w + (x + x0)) * 4];
-  return { ...(await square(bitmap, x0, y0, sw, sh, alpha)), notes, cut: true };
+  const whole = { ...(await square(bitmap, x0, y0, sw, sh, alpha)), notes, cut: true };
+  // several boxes in the photo (where each is: [seeds]): each one cut out on its own as well
+  if (seeds.length >= 2) {
+    try {
+      const t0 = performance.now();
+      const boxes = await boxesAt(bitmap, full, w, h, seeds);
+      if (boxes.length >= 2) {
+        whole.pieces = [];
+        for (const b of boxes) { const pc = await piece(bitmap, full, w, h, b, lines); if (pc) whole.pieces.push(pc); }
+      }
+      whole.splitMs = Math.round(performance.now() - t0);
+    } catch (e) { console.warn("boxes", e); }
+  }
+  return whole;
+}
+
+// ---------------------------------------------------------------- several boxes in one photo
+// A company's group photo (three strengths side by side): the background mask holds all the boxes as one shape, as
+// they touch. SlimSAM (a pruned Segment Anything, Apache licence) is shown, for each box, where it is and where the
+// others are: the text that names that box ("UROMAX10", "10/20") as points to take, the others' as points to leave
+// out (the panel finds them: catalog.js seedsFor; or the admin taps each box). It answers with that box alone.
+// On the processor: the graphics card's answers came out wrong for this model.
+
+const SAM_DIR = new URL("./model/sam/", self.location.href).href;
+let sam = null;
+
+async function samModels() {
+  if (sam) return sam;
+  const rt = await runtime();
+  const opts = { executionProviders: ["wasm"], graphOptimizationLevel: "all" };
+  const bytes = async (name) => new Uint8Array(await (await fetch(SAM_DIR + name)).arrayBuffer());
+  const [enc, dec] = await Promise.all([
+    bytes("vision_encoder.onnx").then((b) => rt.InferenceSession.create(b, opts)),
+    bytes("prompt_encoder_mask_decoder.onnx").then((b) => rt.InferenceSession.create(b, opts)),
+  ]);
+  sam = { enc, dec };
+  return sam;
+}
+
+/**
+ * Each box's mask over the photo scaled to at most 1024 px ({ mask, rw, rh, k }), from [seeds]: [{ pos: [[x, y]],
+ * neg: [[x, y]] }] in the photo's pixels. [full] is the background mask (RGBA at the photo's size).
+ */
+async function boxesAt(bitmap, full, w, h, seeds) {
+  const m = await samModels();
+  const k = 1024 / Math.max(w, h), rw = Math.round(w * k), rh = Math.round(h * k);
+  const [, g] = canvas(rw, rh);
+  g.imageSmoothingQuality = "high";
+  g.drawImage(bitmap, 0, 0, rw, rh);
+  const px = g.getImageData(0, 0, rw, rh).data;
+  const input = new Float32Array(3 * 1024 * 1024);
+  for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) {
+    const i = (y * rw + x) * 4, o = y * 1024 + x;
+    for (let ch = 0; ch < 3; ch++) input[ch * 1048576 + o] = (px[i + ch] / 255 - MEAN[ch]) / STD[ch];
+  }
+  const e = await m.enc.run({ pixel_values: new ort.Tensor("float32", input, [1, 3, 1024, 1024]) });
+  // the background mask at the same scale
+  const fg = new Uint8Array(rw * rh);
+  let fgArea = 0;
+  for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) {
+    const sx = Math.min(w - 1, Math.floor(x / k)), sy = Math.min(h - 1, Math.floor(y / k));
+    if (full[(sy * w + sx) * 4] > 128) { fg[y * rw + x] = 1; fgArea++; }
+  }
+  const masks = [];
+  for (const s of seeds) {
+    const pts = [...s.pos, ...s.neg].map(([x, y]) => [x * k, y * k]);
+    const out = await m.dec.run({
+      input_points: new ort.Tensor("float32", Float32Array.from(pts.flat()), [1, 1, pts.length, 2]),
+      input_labels: new ort.Tensor("int64", BigInt64Array.from([...s.pos.map(() => 1n), ...s.neg.map(() => 0n)]), [1, 1, pts.length]),
+      image_embeddings: e.image_embeddings, image_positional_embeddings: e.image_positional_embeddings,
+    });
+    const pm = out.pred_masks.data; // [1, 1, 3, 256, 256] over the padded 1024 square
+    // of SAM's three answers (part, bigger part, whole), the whole box: the one covering most of the boxes' area
+    // among those that leave the other boxes' text out (an answer that takes in two boxes is not this box)
+    const at = (j, [x, y]) => pm[j * 65536 + Math.min(255, Math.round((y * k) / 4)) * 256 + Math.min(255, Math.round((x * k) / 4))] > 0;
+    let pick = 0, most = -1, fewest = Infinity;
+    for (let j = 0; j < 3; j++) {
+      let n = 0;
+      for (let ly = 0; ly * 4 < rh; ly++) for (let lx = 0; lx * 4 < rw; lx++) if (pm[j * 65536 + ly * 256 + lx] > 0 && fg[ly * 4 * rw + lx * 4]) n++;
+      const others = s.neg.filter((p) => at(j, p)).length;
+      if (others < fewest || (others === fewest && n > most)) { fewest = others; most = n; pick = j; }
+    }
+    const mask = new Uint8Array(rw * rh);
+    for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) {
+      const i = y * rw + x;
+      if (!fg[i]) continue;
+      // the low-resolution answer, read at this point (bilinear)
+      const lx = Math.min(255, (x * 256) / 1024), ly = Math.min(255, (y * 256) / 1024);
+      const x0 = lx | 0, y0 = ly | 0, x1 = Math.min(255, x0 + 1), y1 = Math.min(255, y0 + 1), fx = lx - x0, fy = ly - y0, b = pick * 65536;
+      const v = pm[b + y0 * 256 + x0] * (1 - fx) * (1 - fy) + pm[b + y0 * 256 + x1] * fx * (1 - fy) + pm[b + y1 * 256 + x0] * (1 - fx) * fy + pm[b + y1 * 256 + x1] * fx * fy;
+      if (v > 0) mask[i] = 1;
+    }
+    masks.push({ mask, pos: s.pos.map(([x, y]) => [x * k, y * k]), seed: masks.length });
+  }
+  // a pixel two answers claim goes to the box whose named spot is nearest
+  for (let i = 0; i < rw * rh; i++) {
+    const owners = masks.filter((b) => b.mask[i]);
+    if (owners.length < 2) continue;
+    const x = i % rw, y = (i / rw) | 0;
+    const near = (b) => Math.min(...b.pos.map(([px2, py2]) => (px2 - x) ** 2 + (py2 - y) ** 2));
+    const keep = owners.reduce((a, b) => (near(b) < near(a) ? b : a));
+    for (const b of owners) if (b !== keep) b.mask[i] = 0;
+  }
+  return masks.map((b) => ({ mask: b.mask, rw, rh, k, seed: b.seed, area: b.mask.reduce((n, v) => n + v, 0) }))
+    .filter((b) => b.area >= 0.03 * fgArea);
+}
+
+/** One box of a group photo, cut out like any photo (its own pixels over white, through the background mask). */
+async function piece(bitmap, full, w, h, b, lines) {
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  const keep = (x, y) => b.mask[Math.min(b.rh - 1, Math.floor(y * b.k)) * b.rw + Math.min(b.rw - 1, Math.floor(x * b.k))];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (full[(y * w + x) * 4] > 16 && keep(x, y)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  if (x1 < 0) return null;
+  const sw = x1 - x0 + 1, sh = y1 - y0 + 1;
+  const alpha = new Uint8ClampedArray(sw * sh);
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) alpha[y * sw + x] = keep(x + x0, y + y0) ? full[((y + y0) * w + (x + x0)) * 4] : 0;
+  const notes = Math.max(sw, sh) < OUT ? [`العلبة صغيرة في الصورة (${Math.max(sw, sh)} بكسل): ستبدو أقل وضوحًا`] : [];
+  // the text printed on this box: the lines whose middle falls in it
+  const mine = lines.filter((l) => keep(Math.min(w - 1, l.x + l.w / 2), Math.min(h - 1, l.y + l.height / 2)));
+  return { ...(await square(bitmap, x0, y0, sw, sh, alpha)), notes, cut: true, lines: mine, seed: b.seed };
 }
 
 // ---------------------------------------------------------------- reading the box's printed text
@@ -460,7 +581,7 @@ self.onmessage = async ({ data: msg }) => {
     } else if (msg.type === "clean") {
       if (!msg.plain) await load(() => {});
       const t0 = performance.now();
-      const r = await clean(msg.file, msg.plain);
+      const r = await clean(msg.file, msg.plain, msg.seeds ?? [], msg.lines ?? []);
       self.postMessage({ id: msg.id, ok: true, value: { ...r, ms: Math.round(performance.now() - t0), kind: session?.kind } });
     }
   } catch (e) {

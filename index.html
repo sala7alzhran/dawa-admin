@@ -107,6 +107,8 @@ input:focus,select:focus{border-color:var(--btn);box-shadow:0 0 0 3px var(--soft
 .qcard figcaption{font-size:12px;color:var(--muted);margin-top:4px}
 .tick{display:flex;align-items:center;gap:8px;color:var(--ink)}
 .dlg{z-index:30}
+.qcard.group{border-color:var(--btn)}
+.qcard.part{margin-inline-start:24px;border-style:dashed}
 .newer{position:sticky;top:0;z-index:50;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;padding:10px 16px;background:var(--amberbg);color:var(--amber);font-weight:500}
 .wide-sheet .sheet{max-width:760px}
 a{color:var(--btn)}
@@ -212,12 +214,12 @@ a{color:var(--btn)}
 <div id="toast" class="toast hidden"></div>
 
 <!-- every file of one version of the panel together (tools/panel_publish.py writes the version): a browser never mixes an old file with a new one -->
-<script type="importmap">{"imports":{"./catalog.js":"./catalog.js?v=20261005.1945","./names.js":"./names.js?v=20261005.1945","./rules.js":"./rules.js?v=20261005.1945","./packs.js":"./packs.js?v=20261005.1945","./cutout.js":"./cutout.js?v=20261005.1945","./boxmatch.js":"./boxmatch.js?v=20261005.1945","./ocr.js":"./ocr.js?v=20261005.1945"}}</script>
+<script type="importmap">{"imports":{"./catalog.js":"./catalog.js?v=20261005.2119","./names.js":"./names.js?v=20261005.2119","./rules.js":"./rules.js?v=20261005.2119","./packs.js":"./packs.js?v=20261005.2119","./cutout.js":"./cutout.js?v=20261005.2119","./boxmatch.js":"./boxmatch.js?v=20261005.2119","./ocr.js":"./ocr.js?v=20261005.2119"}}</script>
 <script type="module">
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { initCatalog } from "./catalog.js";
 
-const PANEL_VERSION = "20261005.1945";
+const PANEL_VERSION = "20261005.2119";
 
 const URL_ = "https://lqrplbxlvslehopiczmi.supabase.co";
 const KEY = "sb_publishable_Kaj0gTFO9WDDhRVTjFq_ow_Y-PEA5kQ";
