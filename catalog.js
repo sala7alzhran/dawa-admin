@@ -581,7 +581,9 @@ function decide(q, lines, codes, among = null) {
     const ids = [...new Set([...r.matches.map((x) => x.candidate.id), ...among.map((c) => c.id)])];
     q.suggest = ids.slice(0, 4);
     const kinds = new Set(among.map((c) => c.identity));
-    if (kinds.size === 1 || r.confident) { q.ref = r.matches[0]?.candidate.id ?? among[0].id; q.sure = true; q.how = "text"; }
+    // and its name is on it (two medicines sold in the same strengths, "Zylopril 300" and "Glorizyl 300", aren't told apart by the number)
+    const best = r.matches[0];
+    if (best && !r.alike && (kinds.size === 1 || r.confident) && best.found.has("NAME") && !best.conflicts.has("FORM")) { q.ref = best.candidate.id; q.sure = true; q.how = "text"; }
     return;
   }
   for (const code of codes) {
@@ -593,7 +595,7 @@ function decide(q, lines, codes, among = null) {
   q.read.result = r;
   q.several = BM.several(lines, r.matches[0]);
   q.suggest = [...new Set(r.matches.map((x) => x.candidate.id))].slice(0, 4);
-  if (r.confident && !q.several) { q.ref = q.suggest[0]; q.sure = true; q.how = "text"; }
+  if (r.confident && !r.alike && !q.several && !r.matches[0].conflicts.has("FORM")) { q.ref = q.suggest[0]; q.sure = true; q.how = "text"; }
 }
 
 /** A strength as the numbers that write it, smallest first ("10/20"): boxes and the list don't always write a
@@ -613,11 +615,17 @@ function seedsFor(q) {
   if (lines.length < 2 || !r?.matches?.length) return [];
   const groups = new Map();
   const add = (key, l) => { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(l); };
-  const fam = boxMatcher().family.get(r.matches[0].candidate.brandWords[0]) ?? [];
+  const letters = (l) => l.text.toUpperCase().replace(/[^A-Z]/g, "");
+  // boxes of one medicine in several strengths: its name printed on two of them at least
+  const word = r.matches[0].found.has("NAME") ? r.matches[0].candidate.brandWords[0] : "";
+  const named = word && word.length >= 3 ? lines.filter((l) => { const t = letters(l); return t.includes(word) || BM.similarity(word, t.slice(0, word.length)) >= 0.8; }).length : 0;
+  const fam = named >= 2 ? boxMatcher().family.get(word) ?? [] : [];
   const strengthOf = (c) => numbersOf(c.brandNumbers.length ? c.brandNumbers : c.amounts.map((a) => a.value));
   const strengths = new Set(fam.map(strengthOf).filter(Boolean));
-  const taken = new Set();
-  for (const l of lines) { const n = numbersIn(l.text); if (n && strengths.has(n)) { add("s" + n, l); taken.add(l); } }
+  // a pack's count is not a strength ("30 F.C. Tablets" isn't FEXERIL XR-30)
+  const pack = (l) => /\d+\s*(?:X\s*)?(?:[A-Z.\-]+\s*){0,2}?(?:TA[BT]|CAP|SACHET|AMP|VIAL|SUPP|LOZ|EFFERV)/.test(l.text.toUpperCase());
+  const taken = new Set(lines.filter(pack));
+  for (const l of lines) { if (taken.has(l)) continue; const n = numbersIn(l.text); if (n && strengths.has(n)) { add("s" + n, l); taken.add(l); } }
   // a strength printed over two lines side by side or one under the other ("Coteptal 5" and "1.25")
   const next = (a, b) => {
     const gap = Math.max(a.height, b.height);
@@ -634,13 +642,17 @@ function seedsFor(q) {
     : [...boxMatcher().byId.values()].filter((c) => c.brandJoined === key.slice(1)));
   if (groups.size < 2) {
     groups.clear();
-    const names = [...new Set(r.matches.filter((m) => m.found.has("NAME")).map((m) => m.candidate.brandJoined))].slice(0, 5);
+    // different medicines: one name per family ("FENOGESIC PLUS" and "FENOGESIC-600" are one medicine's)
+    const byFamily = new Map();
+    for (const m of r.matches) if (m.found.has("NAME") && !byFamily.has(m.candidate.brandWords[0])) byFamily.set(m.candidate.brandWords[0], m.candidate.brandJoined);
+    const names = [...byFamily.values()].slice(0, 5);
     // the company's name on the box is not a medicine's ("ALFARES" is not ALFARES-K)
     const makers = boxMatcher().makers.flatMap((m) => m.en.split("|")).map((w) => w.toUpperCase().replace(/[^A-Z]/g, "")).filter((w) => w.length >= 4);
+    const tallest = Math.max(...lines.map((l) => l.height));
     if (names.length >= 2) {
       for (const l of lines) {
-        const t = l.text.toUpperCase().replace(/[^A-Z]/g, "");
-        if (t.length < 4 || makers.some((w) => BM.similarity(w, t) >= 0.85)) continue;
+        const t = letters(l);
+        if (t.length < 4 || l.height < 0.45 * tallest || makers.some((w) => BM.similarity(w, t) >= 0.85)) continue;
         const sims = names.map((n) => [n, BM.similarity(n, t)]).sort((a, b) => b[1] - a[1]);
         if (sims[0][1] >= 0.8 && sims[0][1] - (sims[1]?.[1] ?? 0) >= 0.1) add("n" + sims[0][0], l);
       }

@@ -8,7 +8,7 @@ const isLetter = (c) => c >= "A" && c <= "Z";
 const isDigit = (c) => c >= "0" && c <= "9";
 
 const FORM_NOISE = new Set(["TAB", "TABS", "TABLET", "TABLETS", "CAP", "CAPS", "CAPSULE", "CAPSULES", "SYRUP", "SUSP", "SUSPENSION", "CREAM",
-  "GEL", "DROPS", "AMP", "AMPS", "VIAL", "INJ", "SUPP", "OINT", "SPRAY", "SACHET", "SACHETS", "CTD", "FC", "MG", "ML", "FILM", "COATED", "ORAL", "EYE"]);
+  "GEL", "DROPS", "AMP", "AMPS", "VIAL", "INJ", "SUPP", "OINT", "SPRAY", "SACHET", "SACHETS", "CTD", "FC", "MG", "ML", "FILM", "COATED", "ORAL", "EYE", "SYR", "OVU", "CHEW"]);
 const STOP_WORDS = new Set(["EACH", "CONTAINS", "STORE", "BELOW", "KEEP", "REACH", "CHILDREN", "PHARMACEUTICAL", "PHARMACEUTICALS", "INDUSTRIES",
   "INDUSTRY", "COMPANY", "MADE", "SYRIA", "SYRIAN", "ARAB", "REPUBLIC", "ORAL", "ONLY", "PRESCRIPTION", "DOSAGE", "LEAFLET",
   "MANUFACTURED", "UNDER", "LICENSE", "LABS", "LABORATORIES", "PHARMA", "WITH", "FILM", "COATED", "TABLETS", "CAPSULES",
@@ -370,7 +370,11 @@ export function match(r, candidates, vocabulary, limit = 8) {
   const second = grouped[1]?.score ?? 0;
   const unexplained = r.bigWords.some((w) => !explains(top.candidate, w));
   const confident = top.score >= 0.62 && top.nameScore >= 0.8 && !top.conflicts.has("STRENGTH") && top.score - second >= 0.1 && !unexplained;
+  // another product under the same identity, told apart only by words the box doesn't show ("ORAL VIAL" and "-TAB",
+  // "FINLEPSIN-UNI" and "FINLEPSIN-UNI 200 C.R-TAB") or by small signs (a number in the name, the pack's count):
+  // which one it is can't be told for sure (the panel asks; the app's matcher has no such case to warn of)
+  const alike = scored.some((m) => m !== top && m.candidate.identity === top.candidate.identity && m.candidate.brand !== top.candidate.brand && m.score >= top.score - 0.06);
   const family = top.candidate.brandWords[0];
   const kept = [...grouped.slice(0, limit), ...grouped.slice(limit).filter((m) => family && m.candidate.brandWords[0] === family).slice(0, 4)];
-  return { matches: kept, confident, read: r, seenIngredients: [...presentIngredients], seenMakers: [...presentMakers] };
+  return { matches: kept, confident, alike, read: r, seenIngredients: [...presentIngredients], seenMakers: [...presentMakers] };
 }
