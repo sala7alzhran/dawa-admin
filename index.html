@@ -177,6 +177,7 @@ a{color:var(--btn)}
     <div id="v-home">
       <h1>الرئيسية</h1>
       <p class="sub" id="home-sub"></p>
+      <div class="card" id="dollar"></div>
       <div class="grid" id="stats"></div>
       <h2>تحتاج انتباهك</h2>
       <div class="list" id="attention"></div>
@@ -222,12 +223,12 @@ a{color:var(--btn)}
 <div id="toast" class="toast hidden"></div>
 
 <!-- every file of one version of the panel together (tools/panel_publish.py writes the version): a browser never mixes an old file with a new one -->
-<script type="importmap">{"imports":{"./catalog.js":"./catalog.js?v=20261006.0533","./names.js":"./names.js?v=20261006.0533","./rules.js":"./rules.js?v=20261006.0533","./packs.js":"./packs.js?v=20261006.0533","./cutout.js":"./cutout.js?v=20261006.0533","./boxmatch.js":"./boxmatch.js?v=20261006.0533","./arabic.js":"./arabic.js?v=20261006.0533","./ocr.js":"./ocr.js?v=20261006.0533"}}</script>
+<script type="importmap">{"imports":{"./catalog.js":"./catalog.js?v=20261006.1523","./names.js":"./names.js?v=20261006.1523","./rules.js":"./rules.js?v=20261006.1523","./packs.js":"./packs.js?v=20261006.1523","./cutout.js":"./cutout.js?v=20261006.1523","./boxmatch.js":"./boxmatch.js?v=20261006.1523","./arabic.js":"./arabic.js?v=20261006.1523","./ocr.js":"./ocr.js?v=20261006.1523"}}</script>
 <script type="module">
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { initCatalog } from "./catalog.js";
 
-const PANEL_VERSION = "20261006.0533";
+const PANEL_VERSION = "20261006.1523";
 
 const URL_ = "https://lqrplbxlvslehopiczmi.supabase.co";
 const KEY = "sb_publishable_Kaj0gTFO9WDDhRVTjFq_ow_Y-PEA5kQ";
@@ -243,7 +244,9 @@ const STATE = {
 };
 const ACTION = { activate: "تفعيل", deactivate: "إلغاء التفعيل", extend_trial: "تمديد التجربة", stop: "إيقاف", restore: "إعادة تشغيل",
   login: "دخول إلى اللوحة", login_failed: "كلمة سر خاطئة", set_password: "وضع كلمة السر", change_password: "تغيير كلمة السر",
-  drug_add: "إضافة دواء", drug_change: "تعديل دواء", photo_add: "إضافة صورة", photo_change: "استبدال صورة", undo: "تراجع" };
+  drug_add: "إضافة دواء", drug_change: "تعديل دواء", photo_add: "إضافة صورة", photo_change: "استبدال صورة", undo: "تراجع",
+  rate_set: "سعر الدولار" };
+const num = (x) => new Intl.NumberFormat("ar-SY-u-nu-latn", { maximumFractionDigits: 2 }).format(Number(x));
 const fmtDate = (d) => new Intl.DateTimeFormat("ar-SY-u-nu-latn", { day: "numeric", month: "long", year: "numeric" }).format(d);
 const fmtDay = (day) => fmtDate(new Date(day * 86400000));
 const fmtTime = (s) => new Intl.DateTimeFormat("ar-SY-u-nu-latn", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(s));
@@ -327,6 +330,7 @@ function view(v) {
 document.querySelectorAll(".tab").forEach((t) => (t.onclick = () => view(t.dataset.v)));
 
 async function load() {
+  loadRate();
   const j = await call("pharmacies");
   data = j;
   renderHome();
@@ -359,6 +363,52 @@ function renderHome() {
   ];
   $("attention").innerHTML = att.length ? att.map(([p, why], i) => row(p, why, "a" + i)).join("") : `<div class="card empty">لا شيء يحتاج انتباهك الآن.</div>`;
   bindRows($("attention"), att.map(([p]) => p), "a");
+}
+
+// ---- today's dollar: the pharmacists see it; the medicines' prices follow it only when the admin says so
+let rate = null;
+async function loadRate() {
+  const j = await call("rate");
+  rate = j.rate;
+  if (!rate) return;
+  $("dollar").innerHTML = `<h2 style="margin-top:4px">سعر الدولار</h2>
+    <div class="kv"><span class="k">الدولار اليوم</span><span class="v">${num(rate.today)} ل.س</span></div>
+    <div class="kv"><span class="k">أسعار الأدوية محسوبة على</span><span class="v">${num(rate.prices)} ل.س</span></div>
+    <p class="note">حُدّث الدولار ${ago(rate.updated_at)}، وأسعار الأدوية ${ago(rate.prices_at)}.</p>
+    <label for="usd">سعر الدولار الجديد (بالليرة الجديدة)</label>
+    <input id="usd" type="number" inputmode="decimal" step="0.01" min="1" placeholder="${num(rate.today)}">
+    <button id="usd-save" class="btn wide">حدّث سعر الدولار</button>`;
+  $("usd-save").onclick = askRate;
+}
+function askRate() {
+  const v = Math.round(Number($("usd").value) * 100) / 100;
+  if (!(v >= 1)) return toast("اكتب سعر الدولار أولًا.");
+  if (v > 5000) return toast("اكتبه بالليرة الجديدة، مثل 110 لا 11000.");
+  const pct = (v / Number(rate.prices) - 1) * 100;
+  const up = pct > 0;
+  const same = Math.abs(pct) < 0.05;
+  $("sheet-body").innerHTML = `
+    <h1 style="margin:0 0 8px">الدولار: ${num(v)} ل.س</h1>
+    ${same ? `<p>أسعار الأدوية محسوبة على هذا السعر أصلًا، فلا تتغير.</p>`
+      : `<p style="font-weight:600">تغيّر أسعار الأدوية بنفس النسبة؟</p>
+         <p class="note">الأسعار الآن محسوبة على ${num(rate.prices)}. إن اخترت نعم، ${up ? "ترتفع" : "تنخفض"} كل أسعار الأدوية بالليرة السورية
+         ${num(Math.abs(Math.round(pct * 10) / 10))}% في كل الصيدليات، حين يتصل جوال كل صيدلية بالإنترنت. وإن اخترت لا، يتغير سعر الدولار المعروض فقط.</p>`}
+    <div class="actions">
+      ${same ? `<button class="btn" id="r-only">احفظ</button>`
+        : `<button class="btn" id="r-yes">نعم، غيّر الأسعار ${up ? "+" : "−"}${num(Math.abs(Math.round(pct * 10) / 10))}%</button>
+           <button class="btn ghost" id="r-only">لا، الدولار فقط</button>`}
+      <button class="btn ghost" id="r-no">إلغاء</button>
+    </div>`;
+  $("sheet").classList.remove("hidden");
+  const save = async (prices) => {
+    const j = await call("rate_set", { today: v, prices });
+    close();
+    if (j.ok) { toast(prices ? "تم. تتغير الأسعار في الصيدليات عند اتصالها التالي." : "تم. تغيّر سعر الدولار، والأسعار كما هي."); loadRate(); }
+    else toast("لم يتم. حاول مرة أخرى.");
+  };
+  if ($("r-yes")) $("r-yes").onclick = () => save(true);
+  $("r-only").onclick = () => save(same);
+  $("r-no").onclick = close;
 }
 
 let filter = "all";
@@ -458,6 +508,7 @@ async function loadLog() {
     if (l.action === "activate") d = l.details?.plan === "FULL" ? "مدى الحياة" : l.details?.kind === "month" ? "شهر مجاني" : "سنة";
     if (l.action === "extend_trial") d = `${l.details?.days} أيام`;
     if (l.action === "stop" && l.details?.reason) d = l.details.reason;
+    if (l.action === "rate_set") d = `${num(l.details?.today)} ل.س · ` + (l.details?.prices ? `الأسعار ${l.details.pct > 0 ? "+" : ""}${num(l.details.pct)}%` : "الأسعار كما هي");
     if (l.details?.name) d = [l.details.name, l.details.strength].filter(Boolean).join(" ");
     return `<div class="logrow"><div class="t">${fmtTime(l.at)}</div><div>${ACTION[l.action] || esc(l.action)}${who ? " · " + esc(who) : ""}${d ? " · " + esc(d) : ""}</div></div>`;
   }).join("") : `<div class="empty">لا شيء بعد.</div>`;
