@@ -218,20 +218,30 @@ function changeName(c) {
   const d = drug(c.ref_id) ?? c.data ?? c.before?.row;
   return d?.brand ? title(d) : c.data?.name || `#${c.ref_id}`;
 }
+// the newest first, a page at a time; how many photos and medicines the panel has added on top
+let recentShown = 40;
 function renderRecent() {
   const el = $("recent");
   if (!el) return;
-  const list = changes.slice(-40).reverse();
-  el.innerHTML = list.length ? list.map((c) => {
+  const all = changes.slice().reverse();
+  const list = all.slice(0, recentShown);
+  const live = changes.filter(inEffect);
+  const photos = live.filter((c) => c.kind === "photo" && c.action === "put").length;
+  const meds = live.filter((c) => c.kind === "drug" && c.action === "put" && !c.before).length;
+  el.innerHTML = list.length ? `<div class="note" style="margin-bottom:6px">ساري الآن: ${photos} صورة أضفتها${meds ? ` و${meds} دواء جديد` : ""}.</div>` + list.map((c) => {
     const isUndo = c.note?.startsWith("undo #");
     const canUndo = inEffect(c);
     const what = isUndo ? "تراجعتَ عن تغيير" : ACT[c.kind][c.action](c);
-    return `<div class="logrow"><div class="t">${fmtTime(c.at)}</div><div style="flex:1"><a href="#" data-open="${c.ref_id}" dir="auto">${esc(changeName(c))}</a> · ${what}
+    const thumb = c.kind === "photo" && c.action === "put" && canUndo ? `<img class="thumb small nophoto" data-photo="${c.ref_id}" alt="">` : "";
+    return `<div class="logrow">${thumb}<div class="t">${fmtTime(c.at)}</div><div style="flex:1"><a href="#" data-open="${c.ref_id}" dir="auto">${esc(changeName(c))}</a> · ${what}
       ${c.undone_by ? `<span class="pill p-exp">تراجعتَ عنه</span>` : ""}</div>
       ${canUndo ? `<button class="btn ghost small" data-undo="${c.id}">تراجع</button>` : ""}</div>`;
-  }).join("") : `<div class="empty">لم تضف شيئًا بعد.</div>`;
+  }).join("") + (all.length > recentShown ? `<div class="actions"><button class="btn ghost" data-more>اعرض الأقدم (بقي ${all.length - recentShown})</button></div>` : "")
+    : `<div class="empty">لم تضف شيئًا بعد.</div>`;
   el.querySelectorAll("[data-open]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); if (drug(Number(a.dataset.open))) medSheet(Number(a.dataset.open)); }));
   el.querySelectorAll("[data-undo]").forEach((b) => (b.onclick = () => undo(Number(b.dataset.undo))));
+  el.querySelector("[data-more]")?.addEventListener("click", () => { recentShown += 100; renderRecent(); });
+  lazyPhotos(el);
 }
 
 async function undo(id) {
