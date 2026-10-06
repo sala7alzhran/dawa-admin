@@ -4,8 +4,16 @@
 let worker = null;
 let next = 0;
 const waiting = new Map();
+// one request at a time: the boxes the admin cuts out are read while the batch's photos are still being cleaned
+let line = Promise.resolve();
 
 function ask(type, extra = {}, onProgress) {
+  const p = line.then(() => send(type, extra, onProgress));
+  line = p.catch(() => {});
+  return p;
+}
+
+function send(type, extra, onProgress) {
   if (!worker) {
     // the worker of this same version of the panel (its ?v=…)
     worker = new Worker(new URL("./cutout-worker.js" + new URL(import.meta.url).search, import.meta.url), { type: "module" });
@@ -27,15 +35,15 @@ export const ready = () => ask("ready").catch(() => false);
 /** Loads the model, reporting download progress 0..1; resolves to where it runs ("webgpu" or "wasm"). */
 export const load = (progress = () => {}) => ask("load", {}, progress);
 
-/** The box's printed text, line by line: { lines: [{ text, confidence, height }], ms } (PaddleOCR, in the same thread). */
+/** The box's printed text, line by line: { lines: [{ text, confidence, height, x, y, w, ar? }], ms } (PaddleOCR, Latin and Arabic, in the same thread). */
 export const read = (file) => ask("read", { file });
 
-/** Cleans one photo: { blob, hash, notes, cut, ms, kind }. [plain] only centres it on white (no model). */
 /**
- * [seeds]: where each box of a photo of several is ([{ pos: [[x, y]], neg: [[x, y]] }], the photo's pixels), with the
- * text read on it ([lines]): then also { pieces: [{ blob, hash, notes, cut, lines }] }, each box on its own.
+ * Cleans one photo: { blob, hash, notes, cut, ms, kind }. [plain] only centres it on white (no model).
+ * Where several boxes stand apart in it: { blobs: [[x, y, w, h]] } (0..1 of the photo). [seeds]: where each box of a
+ * photo of several is, from its text ([{ pos: [[x, y]], neg: [[x, y]] }], the photo's pixels): { boxes: [[x, y, w, h]] }.
  */
-export const clean = (file, { plain = false, seeds = [], lines = [] } = {}) => ask("clean", { file, plain, seeds, lines });
+export const clean = (file, { plain = false, seeds = [] } = {}) => ask("clean", { file, plain, seeds });
 
 /** A photo's 128-bit hash (32 hex digits), the same way the cleaned photos and the packs' are hashed. */
 export const hash = (file) => ask("hash", { file });

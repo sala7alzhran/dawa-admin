@@ -111,6 +111,14 @@ input:focus,select:focus{border-color:var(--btn);box-shadow:0 0 0 3px var(--soft
 .qcard.part{margin-inline-start:24px;border-style:dashed}
 .newer{position:sticky;top:0;z-index:50;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;padding:10px 16px;background:var(--amberbg);color:var(--amber);font-weight:500}
 .wide-sheet .sheet{max-width:760px}
+.tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-top:8px}
+.crop{position:relative;width:fit-content;max-width:100%;margin:8px auto 0;user-select:none;-webkit-user-select:none}
+.crop img{display:block;max-width:100%;max-height:68vh;border-radius:12px}
+.crop-layer{position:absolute;inset:0;touch-action:none;cursor:crosshair}
+.crect{position:absolute;border:2px solid var(--btn);background:rgba(0,137,123,.14);border-radius:4px;box-sizing:border-box;pointer-events:none}
+.cnum{position:absolute;top:3px;left:3px;background:var(--btn);color:#fff;font-size:13px;line-height:22px;border-radius:11px;padding:0 9px;cursor:move;pointer-events:auto}
+.cdel{position:absolute;top:-13px;right:-13px;width:26px;height:26px;border-radius:50%;border:0;background:var(--red);color:#fff;font-size:17px;line-height:26px;padding:0;cursor:pointer;pointer-events:auto}
+.chandle{position:absolute;right:-8px;bottom:-8px;width:16px;height:16px;border-radius:50%;background:var(--btn);border:2px solid #fff;cursor:nwse-resize;pointer-events:auto}
 a{color:var(--btn)}
 .logrow .t{color:var(--muted);font-size:13px;white-space:nowrap}
 </style>
@@ -214,12 +222,12 @@ a{color:var(--btn)}
 <div id="toast" class="toast hidden"></div>
 
 <!-- every file of one version of the panel together (tools/panel_publish.py writes the version): a browser never mixes an old file with a new one -->
-<script type="importmap">{"imports":{"./catalog.js":"./catalog.js?v=20261006.0430","./names.js":"./names.js?v=20261006.0430","./rules.js":"./rules.js?v=20261006.0430","./packs.js":"./packs.js?v=20261006.0430","./cutout.js":"./cutout.js?v=20261006.0430","./boxmatch.js":"./boxmatch.js?v=20261006.0430","./ocr.js":"./ocr.js?v=20261006.0430"}}</script>
+<script type="importmap">{"imports":{"./catalog.js":"./catalog.js?v=20261006.0533","./names.js":"./names.js?v=20261006.0533","./rules.js":"./rules.js?v=20261006.0533","./packs.js":"./packs.js?v=20261006.0533","./cutout.js":"./cutout.js?v=20261006.0533","./boxmatch.js":"./boxmatch.js?v=20261006.0533","./arabic.js":"./arabic.js?v=20261006.0533","./ocr.js":"./ocr.js?v=20261006.0533"}}</script>
 <script type="module">
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { initCatalog } from "./catalog.js";
 
-const PANEL_VERSION = "20261006.0430";
+const PANEL_VERSION = "20261006.0533";
 
 const URL_ = "https://lqrplbxlvslehopiczmi.supabase.co";
 const KEY = "sb_publishable_Kaj0gTFO9WDDhRVTjFq_ow_Y-PEA5kQ";

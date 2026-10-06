@@ -6,6 +6,7 @@ import * as N from "./names.js";
 import * as Packs from "./packs.js";
 import * as Cut from "./cutout.js";
 import * as BM from "./boxmatch.js";
+import * as AR from "./arabic.js";
 import { readBox } from "./ocr.js";
 
 const COUNTRY = "SY";
@@ -531,12 +532,13 @@ function boxMatcher() {
   if (matcher) return matcher;
   const makers = all("SELECT maker, short, en FROM makers");
   const latin = new Map(makers.map((m) => [m.short, m.en.split("|").filter(Boolean)]));
-  const rows = all("SELECT id, brand, composition, strength, form_code, pack_count, maker, maker_short FROM drugs");
+  const rows = all("SELECT id, brand, trade_ar, composition, strength, form_code, pack_count, maker, maker_short FROM drugs");
   const cands = rows.map((d) => BM.candidate({ id: d.id, brand: d.brand, ingredient: d.composition, strength: d.strength, formCode: d.form_code,
     packCount: d.pack_count, makerKey: d.maker_short || d.maker, makerLatin: latin.get(d.maker_short || d.maker) ?? [] }));
   const family = new Map();
   for (const c of cands) { const f = c.brandWords[0]; if (f) { if (!family.has(f)) family.set(f, []); family.get(f).push(c); } }
-  matcher = { index: new BM.Index(cands, [...latin.entries()]), byId: new Map(cands.map((c) => [c.id, c])), makers, family };
+  const byId = new Map(cands.map((c) => [c.id, c]));
+  matcher = { index: new BM.Index(cands, [...latin.entries()]), byId, makers, family, ar: AR.index(rows, byId) };
   return matcher;
 }
 
@@ -548,7 +550,7 @@ const NOT_A_NAME = /^(R\s*X|R\s*-?\s*ONLY|RONLY|PRESCRIPTION.*|FOOD SUPPLEMENT|F
 let queue = [];
 let bgEl = null;
 
-const done = (q) => q.saved || q.dropped || q.same || q.heading;
+const done = (q) => q.saved || q.dropped || q.same || q.cropped;
 const unsaved = () => queue.filter((q) => !done(q)).length;
 
 function batch(files, ref = null) {
@@ -580,32 +582,30 @@ async function identify(q) {
   decide(q, lines, codes);
 }
 
-function decide(q, lines, codes, among = null) {
+function decide(q, lines, codes) {
   const m = boxMatcher();
-  const reading = BM.read(lines);
+  // the Latin matcher reads the Latin lines (and the Arabic ones' amounts); the Arabic names are matched on their own
+  const latin = AR.forLatin(lines);
+  const reading = BM.read(latin);
   q.read = { lines, codes, reading };
   if (q.fixed) return;
-  if (among?.length) {
-    // a box of a group photo: told apart by its strength (or name), so it is one of these; the text picks among them
-    const r = reading.isEmpty ? { matches: [] } : BM.match(reading, among, m.index.vocabulary);
-    const ids = [...new Set([...r.matches.map((x) => x.candidate.id), ...among.map((c) => c.id)])];
-    q.suggest = ids.slice(0, 4);
-    const kinds = new Set(among.map((c) => c.identity));
-    // and its name is on it (two medicines sold in the same strengths, "Zylopril 300" and "Glorizyl 300", aren't told apart by the number)
-    const best = r.matches[0];
-    if (best && !r.alike && (kinds.size === 1 || r.confident) && best.found.has("NAME") && !best.conflicts.has("FORM")) { q.ref = best.candidate.id; q.sure = true; q.how = "text"; }
-    return;
-  }
   for (const code of codes) {
     const d = byCode(code);
     if (d) { q.ref = d.id; q.sure = true; q.how = "barcode"; return; }
   }
-  if (reading.isEmpty) return;
-  const r = BM.match(reading, m.index.shortlist(reading), m.index.vocabulary);
+  const r = reading.isEmpty ? { matches: [], confident: false } : BM.match(reading, m.index.shortlist(reading), m.index.vocabulary);
+  const ra = AR.match(lines, m.ar);
   q.read.result = r;
-  q.several = BM.several(lines, r.matches[0]);
-  q.suggest = [...new Set(r.matches.map((x) => x.candidate.id))].slice(0, 4);
-  if (r.confident && !r.alike && !q.several && !r.matches[0].conflicts.has("FORM")) { q.ref = q.suggest[0]; q.sure = true; q.how = "text"; }
+  q.read.arabic = ra;
+  q.several = BM.several(latin, r.matches[0]);
+  const lat = r.matches.map((x) => x.candidate.id), arb = ra.matches.map((x) => x.candidate.id);
+  const latinSure = r.confident && !r.alike && !q.several && !r.matches[0].conflicts.has("FORM");
+  // the Arabic name decides when the Latin text doesn't, unless the Latin text names another medicine
+  const other = r.matches[0]?.found.has("NAME") && ra.matches[0] && r.matches[0].candidate.brandWords[0] !== ra.matches[0].candidate.brandWords[0];
+  const arabicSure = !latinSure && ra.confident && !q.several && !other;
+  q.suggest = [...new Set(latinSure || !arb.length || (r.matches[0]?.found.has("NAME") && !ra.confident) ? [...lat, ...arb] : [...arb, ...lat])].slice(0, 4);
+  if (latinSure) { q.ref = lat[0]; q.sure = true; q.how = "text"; }
+  else if (arabicSure) { q.ref = arb[0]; q.sure = true; q.how = "arabic"; }
 }
 
 /** A strength as the numbers that write it, smallest first ("10/20"): boxes and the list don't always write a
@@ -615,9 +615,9 @@ const numbersIn = (text) => numbersOf((text.replace(/(\d),(\d)/g, "$1.$2").match
 
 /**
  * Where each box of a photo of several is, from what is printed on them: one seed per box, the lines naming it as
- * points to take and the other boxes' as points to leave out (cutout's SAM). The boxes are told apart by the
- * strength the medicine is sold in ("UROMAX10" and "UROMAX5"; "10/20" and "10/40"), else by different medicines'
- * names ("Artral Mineral" and "Artral MSM"). Fewer than two: a photo of one box.
+ * points to take and the other boxes' as points to leave out (cutout's SAM draws a rectangle round each, for the
+ * admin's cutting). The boxes are told apart by the strength the medicine is sold in ("UROMAX10" and "UROMAX5";
+ * "10/20" and "10/40"), else by different medicines' names ("Artral Mineral" and "Artral MSM"). Fewer than two: none.
  */
 function seedsFor(q) {
   const lines = (q.read?.lines ?? []).filter((l) => l.x != null);
@@ -648,8 +648,6 @@ function seedsFor(q) {
     const n = numbersIn(a.text + " " + b.text);
     if (n && strengths.has(n) && /\d/.test(a.text) && /\d/.test(b.text)) { add("s" + n, a); add("s" + n, b); taken.add(a); taken.add(b); }
   }
-  const among = (key) => (key[0] === "s" ? fam.filter((c) => strengthOf(c) === key.slice(1))
-    : [...boxMatcher().byId.values()].filter((c) => c.brandJoined === key.slice(1)));
   if (groups.size < 2) {
     groups.clear();
     // different medicines: one name per family ("FENOGESIC PLUS" and "FENOGESIC-600" are one medicine's)
@@ -670,9 +668,29 @@ function seedsFor(q) {
   }
   if (groups.size < 2) return [];
   const centre = (l) => [l.x + l.w / 2, l.y + l.height / 2];
-  const all = [...groups.entries()];
-  // the medicines each box can be: those of its strength (or name) — what tells the box apart decides between them
-  return all.map(([key, ls]) => ({ pos: ls.map(centre), neg: all.filter(([o]) => o !== key).flatMap(([, x]) => x).map(centre), cands: among(key) }));
+  const all = [...groups.values()];
+  return all.map((ls) => ({ pos: ls.map(centre), neg: all.filter((o) => o !== ls).flat().map(centre) }));
+}
+
+/**
+ * The medicine's name printed big in two places apart (CEF and CEF, PIRACETAM RAMA twice, MOTILAX and MOTILAX FORTE):
+ * boxes side by side, even of one strength. A box's own side (written upwards) doesn't count.
+ */
+function nameTwice(q) {
+  const best = q.read?.result?.matches?.[0];
+  if (!best?.found.has("NAME")) return false;
+  const word = best.candidate.brandWords[0];
+  if (!word || word.length < 3) return false;
+  const lines = (q.read.lines ?? []).filter((l) => !l.ar && !l.v && l.x != null && l.confidence >= 0.75);
+  const tallest = Math.max(0, ...lines.map((l) => l.height));
+  const letters = (l) => l.text.toUpperCase().replace(/[^A-Z]/g, "");
+  const named = lines.filter((l) => l.height >= 0.5 * tallest && (letters(l).includes(word) || BM.similarity(word, letters(l).slice(0, word.length)) >= 0.85));
+  const centre = (l) => [l.x + l.w / 2, l.y + l.height / 2];
+  for (let i = 0; i < named.length; i++) for (let j = i + 1; j < named.length; j++) {
+    const a = named[i], b = named[j], [ax, ay] = centre(a), [bx, by] = centre(b), h = Math.max(a.height, b.height);
+    if (Math.min(a.height, b.height) >= 0.6 * h && (Math.abs(ax - bx) > Math.max(a.w, b.w) / 2 + h || Math.abs(ay - by) > 2 * h)) return true;
+  }
+  return false;
 }
 
 /** Whether the box's text has this medicine's name (null: nothing readable to tell). */
@@ -709,7 +727,7 @@ async function settle(q) {
   q.twin = lookalike(q);
   if (q.same) return;
   const clean = q.out.cut && !q.out.notes.length;
-  if (q.sure && clean && !q.twin && !q.fromGroup && !q.mixed && !photoOf(q.ref)) await savePhoto(q, true);
+  if (q.sure && clean && !q.twin && !q.multi && !photoOf(q.ref)) await savePhoto(q, true);
 }
 
 async function work() {
@@ -729,7 +747,7 @@ async function work() {
     if (state) state.innerHTML = `<div class="msg err">تعذّر تشغيل أداة قص الخلفية في هذا المتصفح. الصور تُحفظ كما هي على خلفية بيضاء.</div>`;
     for (const q of queue) q.plain = true;
   }
-  // the photos as chosen (the boxes a group photo is split into come in under it already cut)
+  // the photos as chosen (the boxes cut from one by hand are read and cut on their own: see crop)
   for (const q of [...queue]) await cut(q);
 }
 
@@ -738,43 +756,111 @@ async function cut(q) {
   q.busy = "cut";
   renderQueue();
   try {
-    const seeds = q.noSplit || q.fromGroup || q.fixed || q.plain ? [] : q.seeds ?? seedsFor(q);
+    const seeds = q.noSplit || q.fromCrop || q.fixed || q.plain ? [] : q.seeds ?? seedsFor(q);
     q.seeds = seeds;
-    q.out = await Cut.clean(q.file, { plain: !!q.plain, seeds: seeds.map(({ pos, neg }) => ({ pos, neg })), lines: q.read?.lines ?? [] });
+    q.out = await Cut.clean(q.file, { plain: !!q.plain, seeds });
     if (q.outUrl) URL.revokeObjectURL(q.outUrl);
     q.outUrl = URL.createObjectURL(q.out.blob);
     q.error = false;
-    q.mixed = seeds.length >= 2 && !(q.out.pieces?.length >= 2);
+    // several boxes in it (told apart by their text, standing apart, touching in an L or a step, or one name printed
+    // twice): the admin cuts them out, each one becomes a photo
+    q.multi = !q.noSplit && !q.fromCrop && !q.fixed && !q.plain
+      && (seeds.length >= 2 || q.several || q.out.blobs?.length >= 2 || q.out.fill < MULTI_FILL || nameTwice(q));
   } catch (e) {
     console.error(e);
     q.error = true;
   }
   q.busy = null;
-  if (q.out?.pieces?.length >= 2) group(q);
-  else await settle(q);
-  renderQueue();
-}
-
-/** A photo of several boxes: a heading for it, and each box as a photo of its own just under it. */
-function group(q) {
-  q.heading = true;
-  const kids = q.out.pieces.map((pc, n) => {
-    const k = { file: q.file, src: q.src, out: pc, outUrl: URL.createObjectURL(pc.blob), parent: q, fromGroup: true, n: n + 1, sure: false, suggest: [] };
-    decide(k, pc.lines, [], q.seeds?.[pc.seed]?.cands);
-    k.same = samePhoto(k);
-    return k;
-  });
-  for (const k of kids) k.twin = lookalike(k);
-  q.kids = kids;
-  queue.splice(queue.indexOf(q) + 1, 0, ...kids);
-}
-
-/** Back to one photo: the boxes taken away, the photo decided as a whole. */
-async function ungroup(q) {
-  for (const k of q.kids ?? []) { const i = queue.indexOf(k); if (i >= 0) queue.splice(i, 1); }
-  q.kids = null; q.heading = false; q.noSplit = true;
   await settle(q);
   renderQueue();
+}
+
+// ---------------------------------------------------------------- cutting several boxes out by hand
+// A photo of several boxes isn't saved: the admin draws a rectangle round each box (the panel draws its own guess
+// first, from where the text says each box is or where the boxes stand apart), and each rectangle becomes a photo of
+// its own, read, matched and cleaned like any other.
+
+// one box fills its outline (measured on the photos so far); touching boxes leave a corner of it empty
+const MULTI_FILL = 0.85;
+
+/** Rectangles [x, y, w, h] as 0..1 of the photo: the panel's guess at where each box is. */
+function guessBoxes(q) {
+  const list = q.out?.boxes?.length >= 2 ? q.out.boxes : q.out?.blobs ?? [];
+  return list.map((r) => [...r]);
+}
+
+function cropper(q) {
+  let rects = guessBoxes(q);
+  const dlg = dialog(`
+    <div style="display:flex;align-items:center;gap:10px;justify-content:space-between"><h1 style="margin:0">قصّ العلب</h1>
+    <button class="btn ghost small" data-no>إلغاء</button></div>
+    <p class="sub">ارسم مربعًا حول كل علبة بالسحب على الصورة (ولو بدأت داخل مربع آخر). اسحب رقم المربع لتحريكه، وزاويته لتكبيره وتصغيره، و× لحذفه.
+    ${rects.length ? "رسمتُ ما ظننته علبًا: صحّحه." : ""}</p>
+    <div class="crop"><img src="${q.src}" alt="" draggable="false"><div class="crop-layer"></div></div>
+    <div class="actions"><button class="btn" data-ok></button><button class="btn ghost" data-one>هي علبة واحدة، لا تقصّها</button></div>`);
+  dlg.classList.add("wide-sheet");
+  dlg.onclick = null; // a stray tap outside doesn't throw the drawing away
+  const layer = dlg.querySelector(".crop-layer"), ok = dlg.querySelector("[data-ok]");
+  const draw = () => {
+    // a rectangle's own area draws a new one (boxes overlap); its number moves it, its corner sizes it
+    layer.innerHTML = rects.map(([x, y, w, h], i) => `<div class="crect" style="left:${x * 100}%;top:${y * 100}%;width:${w * 100}%;height:${h * 100}%">
+      <span class="cnum" data-r="${i}">${i + 1}</span><button class="cdel" data-del="${i}" aria-label="احذفه">×</button>
+      <i class="chandle" data-h="${i}"></i></div>`).join("");
+    const n = rects.length;
+    ok.textContent = n ? `تم: افصلها إلى ${n === 1 ? "صورة واحدة" : n === 2 ? "صورتين" : n <= 10 ? `${n} صور` : `${n} صورة`}` : "ارسم مربعًا حول علبة على الأقل";
+    ok.disabled = !rects.length;
+  };
+  draw();
+  // the pointer in 0..1 of the photo
+  const at = (e) => { const b = layer.getBoundingClientRect(); return [Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)), Math.min(1, Math.max(0, (e.clientY - b.top) / b.height))]; };
+  let drag = null;
+  layer.onpointerdown = (e) => {
+    const del = e.target.closest("[data-del]");
+    if (del) { rects.splice(Number(del.dataset.del), 1); draw(); return; }
+    e.preventDefault();
+    try { layer.setPointerCapture(e.pointerId); } catch {}
+    const p = at(e), h = e.target.closest("[data-h]"), r = e.target.closest("[data-r]");
+    if (h) drag = { i: Number(h.dataset.h), mode: "size" };
+    else if (r) { const i = Number(r.dataset.r); drag = { i, mode: "move", dx: p[0] - rects[i][0], dy: p[1] - rects[i][1] }; }
+    else { rects.push([p[0], p[1], 0, 0]); drag = { i: rects.length - 1, mode: "new", x0: p[0], y0: p[1] }; }
+  };
+  layer.onpointermove = (e) => {
+    if (!drag) return;
+    const [x, y] = at(e), r = rects[drag.i];
+    if (drag.mode === "new") rects[drag.i] = [Math.min(x, drag.x0), Math.min(y, drag.y0), Math.abs(x - drag.x0), Math.abs(y - drag.y0)];
+    else if (drag.mode === "size") { r[2] = Math.max(0.02, x - r[0]); r[3] = Math.max(0.02, y - r[1]); }
+    else { r[0] = Math.min(1 - r[2], Math.max(0, x - drag.dx)); r[1] = Math.min(1 - r[3], Math.max(0, y - drag.dy)); }
+    draw();
+  };
+  layer.onpointerup = () => {
+    // a tap, not a rectangle
+    if (drag?.mode === "new" && (rects[drag.i][2] < 0.03 || rects[drag.i][3] < 0.03)) rects.splice(drag.i, 1);
+    drag = null;
+    draw();
+  };
+  dlg.querySelector("[data-no]").onclick = () => dlg.remove();
+  dlg.querySelector("[data-one]").onclick = async () => { dlg.remove(); q.multi = false; q.noSplit = true; await settle(q); renderQueue(); };
+  ok.onclick = async () => { const list = rects.filter(([, , w, h]) => w >= 0.03 && h >= 0.03); dlg.remove(); if (list.length) await crop(q, list); };
+}
+
+/** Each rectangle cut from the photo at its full size, as a photo of its own, under it; then read and cleaned. */
+async function crop(q, rects) {
+  const bmp = await createImageBitmap(q.file, { imageOrientation: "from-image" });
+  const kids = [];
+  for (const [n, [x, y, w, h]] of rects.entries()) {
+    const sx = Math.round(x * bmp.width), sy = Math.round(y * bmp.height), sw = Math.max(1, Math.round(w * bmp.width)), sh = Math.max(1, Math.round(h * bmp.height));
+    const c = document.createElement("canvas");
+    c.width = sw; c.height = sh;
+    c.getContext("2d").drawImage(bmp, sx, sy, sw, sh, 0, 0, sw, sh);
+    const blob = await new Promise((ok) => c.toBlob(ok, "image/jpeg", 0.95));
+    const file = new File([blob], `${q.file.name.replace(/\.\w+$/, "")} (${n + 1}).jpg`, { type: "image/jpeg" });
+    kids.push({ file, src: URL.createObjectURL(file), ref: null, fixed: false, sure: false, suggest: [], busy: "read", fromCrop: true, noSplit: true, parent: q, n: n + 1 });
+  }
+  q.cropped = kids.length;
+  queue.splice(queue.indexOf(q) + 1, 0, ...kids);
+  renderQueue();
+  for (const k of kids) { try { await identify(k); } catch (e) { console.error(e); } k.busy = "cut"; renderQueue(); }
+  for (const k of kids) await cut(k);
 }
 
 /** The medicine's name as printed: the biggest words, joined as they stand side by side ("AZ" + "ITROLYD" = "AZITROLYD"). */
@@ -802,13 +888,14 @@ function ingredientsOnBox(q) {
 /** The new medicine's form, filled in from what the box says; the photo goes with the medicine once saved. */
 function addFromBox(q) {
   const r = q.read?.reading;
-  const brand = nameOnBox(q.read?.lines ?? []);
-  const strength = (q.read?.lines ?? []).map((l) => N.cleanStrength(l.text)).find(Boolean) ?? "";
-  const form = r ? [...r.forms].map((f) => FORM_AR[f]).find(Boolean) ?? "" : "";
+  const lines = q.read?.lines ?? [];
+  const brand = nameOnBox(lines);
+  const strength = AR.forLatin(lines).map((l) => N.cleanStrength(l.text)).find(Boolean) ?? "";
+  const form = [...(r?.forms ?? []), ...AR.formsOf(lines)].map((f) => FORM_AR[f]).find(Boolean) ?? "";
   const comp = ingredientsOnBox(q).join("+");
   const makerShort = q.read?.result?.seenMakers?.[0];
   const maker = makerShort ? boxMatcher().makers.find((m) => m.short === makerShort)?.maker ?? "" : "";
-  medForm(null, { brand, strength, form_ar: form, composition: comp, maker, barcodes: (q.read?.codes ?? []).join(" ") }, async (ref) => {
+  medForm(null, { brand, trade_ar: AR.nameOnBox(lines), strength, form_ar: form, composition: comp, maker, barcodes: (q.read?.codes ?? []).join(" ") }, async (ref) => {
     matcher = null;
     q.ref = ref; q.fixed = true; q.sure = true; q.how = "added";
     q.same = samePhoto(q); q.twin = lookalike(q);
@@ -822,8 +909,8 @@ function addFromBox(q) {
 function summary() {
   const n = (f) => queue.filter(f).length;
   const parts = [
-    [n((q) => q.saved), "حُفظت"], [n((q) => q.same), "موجودة أصلًا"],
-    [n((q) => !done(q) && !q.busy && q.ref), "تنتظر قرارك"], [n((q) => !done(q) && !q.busy && !q.ref), "تحتاج تحديد الدواء"],
+    [n((q) => q.saved), "حُفظت"], [n((q) => q.same), "موجودة أصلًا"], [n((q) => !done(q) && !q.busy && q.multi), "فيها عدة علب، تحتاج قصّك"],
+    [n((q) => !done(q) && !q.busy && !q.multi && q.ref), "تنتظر قرارك"], [n((q) => !done(q) && !q.busy && !q.multi && !q.ref), "تحتاج تحديد الدواء"],
     [n((q) => !done(q) && q.busy), "قيد العمل"],
   ].filter(([k]) => k > 0);
   const el = $("q-summary");
@@ -841,20 +928,22 @@ function renderQueue() {
   summary();
   el.innerHTML = queue.map((q, i) => {
     if (q.dropped) return "";
-    if (q.heading) {
-      const ready = (q.kids ?? []).filter((k) => !done(k) && k.ref && k.sure && !photoOf(k.ref) && !k.twin).length;
+    if (q.cropped) {
       return `<div class="card qcard group" data-i="${i}">
         <div class="qimgs"><figure><img src="${q.src}" alt=""><figcaption title="${esc(q.file.name)}">الصورة كما رفعتها</figcaption></figure></div>
-        <div class="msg ok"><b>في هذه الصورة ${q.kids.length} علب، فصلتها.</b> كل علبة في بطاقة تحتها، عرفتُ دواءها من الكتابة عليها. راجعها ثم احفظ.</div>
-        <div class="actions">${ready ? `<button class="btn" data-saveall>احفظ ما عرفته (${ready})</button>` : ""}<button class="btn ghost" data-ungroup>لا تفصلها، اعتبرها صورة واحدة</button></div>
+        <div class="msg ok">قصصتَ منها ${q.cropped === 1 ? "صورة واحدة" : q.cropped === 2 ? "صورتين" : `${q.cropped} صور`}، تجدها تحتها.</div>
       </div>`;
     }
     const d = q.ref ? drug(q.ref) : null;
     const p = d ? photoOf(d.id) : null;
     const fit = d && !q.sure ? fits(q, d.id) : null;
-    const how = q.how === "barcode" ? "عرفته من الباركود" : q.how === "text" ? "عرفته من الكتابة على العلبة" : "";
+    const how = q.how === "barcode" ? "عرفته من الباركود" : q.how === "text" ? "عرفته من الكتابة على العلبة"
+      : q.how === "arabic" ? "عرفته من الكتابة العربية على العلبة" : "";
     let body;
-    if (q.saved) {
+    if (q.multi && !q.busy && !q.saved && !q.same) {
+      body = `<div class="msg warn"><b>في هذه الصورة عدة علب.</b> قصّ كل علبة بيدك، فتصير كل واحدة صورة مستقلة أعرف دواءها وأحفظها.</div>
+        <div class="actions"><button class="btn" data-crop>قصّها</button><button class="btn ghost" data-one>هي علبة واحدة</button></div>`;
+    } else if (q.saved) {
       body = `<div class="msg ok"><b>حُفظت${q.auto && q.how !== "added" ? " تلقائيًا" : ""}</b> لـ «${esc(d ? title(d) : "")}»${how ? ` (${how})` : ""}. تصل إلى الصيدليات خلال يوم.</div>
         <div class="actions"><button class="btn ghost" data-undo>تراجع</button></div>`;
     } else if (q.busy === "read") {
@@ -865,8 +954,7 @@ function renderQueue() {
     } else if (d) {
       body = `<div class="row" style="margin-top:4px"><div class="main"><div class="name" dir="auto">${esc(title(d))}</div><div class="meta">${esc(subtitle(d))}${how ? ` · ${how}` : ""}</div></div>
           <button class="btn ghost small" data-change>ليس هذا الدواء</button></div>
-        ${fit === false ? `<div class="msg warn">الكتابة على العلبة لا تشبه اسم هذا الدواء. تأكّد أنه الصحيح.</div>` : ""}
-        ${q.mixed ? `<div class="msg warn">يبدو أن في الصورة أكثر من علبة ولم أستطع فصلها. تأكّد أنها لهذا الدواء وحده.</div>` : ""}
+        ${fit === false && q.how !== "arabic" ? `<div class="msg warn">الكتابة على العلبة لا تشبه اسم هذا الدواء. تأكّد أنه الصحيح.</div>` : ""}
         ${q.twin ? `<div class="msg warn">هذه الصورة تشبه صورة «${esc(title(q.twin))}». تأكّد أنها لهذا الدواء.</div>` : ""}
         ${q.out?.notes?.length ? `<div class="note">${q.out.notes.map(esc).join("<br>")}</div>` : ""}
         ${q.busy ? `<div class="note">أقصّ الخلفية…</div>`
@@ -882,14 +970,16 @@ function renderQueue() {
         <div class="actions"><button class="btn${sug ? " ghost" : ""}" data-add>ليس في القائمة؟ أضفه الآن</button><button class="btn ghost" data-drop>أزلها من هنا</button></div>
         <label>أو ابحث عنه</label><input type="search" data-q placeholder="اسم الدواء أو باركوده"><div class="list picks" data-picks></div>`;
     }
-    return `<div class="card qcard${q.fromGroup ? " part" : ""}" data-i="${i}">
-      ${q.fromGroup ? `<div class="note">العلبة ${q.n} من ${q.parent.kids.length} في الصورة</div>` : ""}
+    const open = q.out && !q.busy && !q.saved && !q.same;
+    return `<div class="card qcard${q.fromCrop ? " part" : ""}" data-i="${i}">
+      ${q.fromCrop ? `<div class="note">العلبة ${q.n} مما قصصتَه من الصورة السابقة</div>` : ""}
       <div class="qimgs">
-        ${q.fromGroup ? "" : `<figure><img src="${q.src}" alt=""><figcaption title="${esc(q.file.name)}">الأصلية</figcaption></figure>`}
+        <figure><img src="${q.src}" alt=""><figcaption title="${esc(q.file.name)}">${q.fromCrop ? "ما قصصتَه" : "الأصلية"}</figcaption></figure>
         <figure>${q.outUrl ? `<img src="${q.outUrl}" alt="">` : `<div class="ph">${q.error ? "تعذّر قصها" : "أقصّ الخلفية…"}</div>`}<figcaption>بعد القص</figcaption></figure>
         ${p && !q.saved ? `<figure><img data-photo="${d.id}" alt=""><figcaption>صورته الحالية</figcaption></figure>` : ""}
       </div>
-      ${q.out && !q.saved && !q.same && !q.fromGroup ? `<label class="tick"><input type="checkbox" data-plain ${q.plain ? "checked" : ""}> القص غير صحيح؟ استعمل الصورة كما هي على خلفية بيضاء</label>` : ""}
+      ${open && !q.multi ? `<div class="tools"><label class="tick"><input type="checkbox" data-plain ${q.plain ? "checked" : ""}> القص غير صحيح؟ استعمل الصورة كما هي على خلفية بيضاء</label>
+        <button class="btn ghost small" data-crop>فيها أكثر من علبة؟ قصّها بيدي</button></div>` : ""}
       ${body}
     </div>`;
   }).join("") || `<div class="card empty">انتهت الصور.</div>`;
@@ -919,11 +1009,8 @@ function renderQueue() {
       renderQueue();
     });
     card.querySelector("[data-plain]")?.addEventListener("change", (e) => { q.plain = e.target.checked; cut(q); });
-    card.querySelector("[data-ungroup]")?.addEventListener("click", () => ungroup(q));
-    card.querySelector("[data-saveall]")?.addEventListener("click", async () => {
-      for (const k of q.kids.filter((k) => !done(k) && k.ref && k.sure && !photoOf(k.ref) && !k.twin)) await savePhoto(k, true);
-      renderQueue();
-    });
+    card.querySelector("[data-crop]")?.addEventListener("click", () => cropper(q));
+    card.querySelector("[data-one]")?.addEventListener("click", async () => { q.multi = false; q.noSplit = true; await settle(q); renderQueue(); });
   });
   lazyPhotos(el);
 }
@@ -933,7 +1020,8 @@ async function savePhoto(q, auto = false) {
   const p = photoOf(q.ref);
   const before = p?.source === "panel" ? { source: "panel", change: p.change, data: p.data } : p?.source === "pack" ? { source: "pack" } : null;
   const j = await ctx.call("photo_put", { country: COUNTRY, ref_id: q.ref, image: await toBase64(q.out.blob), dhash: q.out.hash,
-    name: title(d), before, note: q.how === "barcode" ? "matched by barcode" : q.how === "text" ? "matched by the box's text" : null });
+    name: title(d), before, note: q.how === "barcode" ? "matched by barcode" : q.how === "text" ? "matched by the box's text"
+      : q.how === "arabic" ? "matched by the box's Arabic text" : null });
   if (!j.ok) { ctx.toast("لم تُحفظ الصورة: " + (j.error || "حاول مرة أخرى")); return false; }
   q.saved = j.change;
   q.auto = auto;

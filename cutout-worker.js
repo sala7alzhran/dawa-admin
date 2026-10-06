@@ -208,7 +208,53 @@ async function square(source, sx, sy, sw, sh, alpha) {
   return { blob, hash: dhash(c) };
 }
 
-async function clean(file, plain, seeds = [], lines = []) {
+/**
+ * The shapes standing apart in the background mask (boxes not touching one another), biggest first, as rectangles
+ * [x, y, w, h] in 0..1 of the photo: two or more big ones, a photo of several boxes. And how much of its outline the
+ * biggest shape fills (its area over its convex hull's): one box seen at any angle fills it, two touching boxes
+ * (an L, a step) leave a corner empty.
+ */
+function apart(full, w, h) {
+  const k = Math.min(1, 200 / Math.max(w, h)), gw = Math.max(1, Math.round(w * k)), gh = Math.max(1, Math.round(h * k));
+  const on = new Uint8Array(gw * gh);
+  let total = 0;
+  for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
+    const sx = Math.min(w - 1, Math.floor(x / k)), sy = Math.min(h - 1, Math.floor(y / k));
+    if (full[(sy * w + sx) * 4] > 128) { on[y * gw + x] = 1; total++; }
+  }
+  const seen = new Uint8Array(gw * gh), parts = [], stack = [];
+  for (let s = 0; s < on.length; s++) {
+    if (!on[s] || seen[s]) continue;
+    let n = 0, x0 = gw, y0 = gh, x1 = 0, y1 = 0;
+    const rows = new Map();
+    stack.push(s); seen[s] = 1;
+    while (stack.length) {
+      const i = stack.pop(), x = i % gw, y = (i / gw) | 0;
+      n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      const r = rows.get(y);
+      if (!r) rows.set(y, [x, x]); else { if (x < r[0]) r[0] = x; if (x > r[1]) r[1] = x; }
+      for (const j of [x > 0 ? i - 1 : -1, x < gw - 1 ? i + 1 : -1, y > 0 ? i - gw : -1, y < gh - 1 ? i + gw : -1]) if (j >= 0 && on[j] && !seen[j]) { seen[j] = 1; stack.push(j); }
+    }
+    if (n < 0.08 * total) continue;
+    // its convex hull's area (the row ends are enough to make it)
+    const pts = [];
+    for (const [y, [a, b]] of rows) pts.push([a, y], [b + 1, y], [a, y + 1], [b + 1, y + 1]);
+    const hp = hull(pts);
+    let area = 0;
+    for (let i = 0; i < hp.length; i++) { const p = hp[i], q = hp[(i + 1) % hp.length]; area += p[0] * q[1] - q[0] * p[1]; }
+    parts.push({ n, fill: n / Math.max(1, Math.abs(area) / 2), r: [x0 / gw, y0 / gh, (x1 - x0 + 1) / gw, (y1 - y0 + 1) / gh] });
+  }
+  parts.sort((a, b) => b.n - a.n);
+  return { rects: parts.slice(0, 12).map((p) => pad(p.r)), fill: parts[0]?.fill ?? 1 };
+}
+
+/** A rectangle widened a little (the cut keeps the box's edges), within the photo. */
+function pad([x, y, w, h], m = 0.015) {
+  const x0 = Math.max(0, x - m), y0 = Math.max(0, y - m), x1 = Math.min(1, x + w + m), y1 = Math.min(1, y + h + m);
+  return [x0, y0, x1 - x0, y1 - y0];
+}
+
+async function clean(file, plain, seeds = []) {
   const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
   const w = bitmap.width, h = bitmap.height;
   const notes = [];
@@ -240,15 +286,15 @@ async function clean(file, plain, seeds = [], lines = []) {
   const alpha = new Uint8ClampedArray(sw * sh);
   for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) alpha[y * sw + x] = full[((y + y0) * w + (x + x0)) * 4];
   const whole = { ...(await square(bitmap, x0, y0, sw, sh, alpha)), notes, cut: true };
-  // several boxes in the photo (where each is: [seeds]): each one cut out on its own as well
+  // several boxes in the photo: where each one is, for the admin to cut them out ([x, y, w, h] in 0..1 of the photo)
+  const { rects: blobs, fill } = apart(full, w, h);
+  if (blobs.length >= 2) whole.blobs = blobs;
+  whole.fill = Math.round(fill * 1000) / 1000;
   if (seeds.length >= 2) {
     try {
       const t0 = performance.now();
       const boxes = await boxesAt(bitmap, full, w, h, seeds);
-      if (boxes.length >= 2) {
-        whole.pieces = [];
-        for (const b of boxes) { const pc = await piece(bitmap, full, w, h, b, lines); if (pc) whole.pieces.push(pc); }
-      }
+      if (boxes.length >= 2) whole.boxes = boxes.map((b) => rectOf(b)).filter(Boolean);
       whole.splitMs = Math.round(performance.now() - t0);
     } catch (e) { console.warn("boxes", e); }
   }
@@ -259,7 +305,8 @@ async function clean(file, plain, seeds = [], lines = []) {
 // A company's group photo (three strengths side by side): the background mask holds all the boxes as one shape, as
 // they touch. SlimSAM (a pruned Segment Anything, Apache licence) is shown, for each box, where it is and where the
 // others are: the text that names that box ("UROMAX10", "10/20") as points to take, the others' as points to leave
-// out (the panel finds them: catalog.js seedsFor; or the admin taps each box). It answers with that box alone.
+// out (the panel finds them: catalog.js seedsFor). It answers with that box alone: its rectangle is the panel's guess
+// for the admin, who cuts the boxes out by hand (SAM's cuts of boxes that overlap came out ragged).
 // On the processor: the graphics card's answers came out wrong for this model.
 
 const SAM_DIR = new URL("./model/sam/", self.location.href).href;
@@ -346,26 +393,20 @@ async function boxesAt(bitmap, full, w, h, seeds) {
     .filter((b) => b.area >= 0.03 * fgArea);
 }
 
-/** One box of a group photo, cut out like any photo (its own pixels over white, through the background mask). */
-async function piece(bitmap, full, w, h, b, lines) {
-  let x0 = w, y0 = h, x1 = -1, y1 = -1;
-  const keep = (x, y) => b.mask[Math.min(b.rh - 1, Math.floor(y * b.k)) * b.rw + Math.min(b.rw - 1, Math.floor(x * b.k))];
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    if (full[(y * w + x) * 4] > 16 && keep(x, y)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+/** One box's rectangle [x, y, w, h] in 0..1 of the photo, a little wider than its mask (null: nothing of it). */
+function rectOf(b) {
+  let x0 = b.rw, y0 = b.rh, x1 = -1, y1 = -1;
+  for (let y = 0; y < b.rh; y++) for (let x = 0; x < b.rw; x++) {
+    if (b.mask[y * b.rw + x]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
   }
-  if (x1 < 0) return null;
-  const sw = x1 - x0 + 1, sh = y1 - y0 + 1;
-  const alpha = new Uint8ClampedArray(sw * sh);
-  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) alpha[y * sw + x] = keep(x + x0, y + y0) ? full[((y + y0) * w + (x + x0)) * 4] : 0;
-  const notes = Math.max(sw, sh) < OUT ? [`العلبة صغيرة في الصورة (${Math.max(sw, sh)} بكسل): ستبدو أقل وضوحًا`] : [];
-  // the text printed on this box: the lines whose middle falls in it
-  const mine = lines.filter((l) => keep(Math.min(w - 1, l.x + l.w / 2), Math.min(h - 1, l.y + l.height / 2)));
-  return { ...(await square(bitmap, x0, y0, sw, sh, alpha)), notes, cut: true, lines: mine, seed: b.seed };
+  return x1 < 0 ? null : pad([x0 / b.rw, y0 / b.rh, (x1 - x0 + 1) / b.rw, (y1 - y0 + 1) / b.rh]);
 }
 
 // ---------------------------------------------------------------- reading the box's printed text
 // PaddleOCR (PP-OCRv4, Apache licence; the ONNX export of RapidOCR), as tools measured it on the companies' photos:
 // find the text lines (DB detection), read each one (CTC). Small models (15 MB), on the processor: a second or two.
+// Each line is read twice, by the Latin reader and by PaddleOCR's Arabic one (PP-OCRv5, 8 MB): many Syrian boxes
+// carry their name in Arabic only, or in Arabic in the biggest letters.
 
 const OCR_DIR = new URL("./model/ocr/", self.location.href).href;
 let ocr = null;
@@ -384,13 +425,16 @@ async function ocrModels() {
   const rt = await runtime();
   const bytes = async (name) => new Uint8Array(await (await fetch(OCR_DIR + name)).arrayBuffer());
   const opts = { executionProviders: ["wasm"], graphOptimizationLevel: "all" };
-  const [det, rec, keys] = await Promise.all([
+  const [det, rec, keys, recAr, keysAr] = await Promise.all([
     bytes("det.onnx").then((b) => rt.InferenceSession.create(b, opts)),
     bytes("rec.onnx").then((b) => rt.InferenceSession.create(b, opts)),
     fetch(OCR_DIR + "keys.txt").then((r) => r.text()),
+    bytes("rec_ar.onnx").then((b) => rt.InferenceSession.create(b, opts)),
+    fetch(OCR_DIR + "keys_ar.txt").then((r) => r.text()),
   ]);
   // one character a line (whatever the line ends), then the space; 0 is CTC's blank
-  ocr = { det, rec, chars: ["", ...keys.replace(/\r?\n$/, "").split(/\r?\n/), " "] };
+  const chars = (k) => ["", ...k.replace(/\r?\n$/, "").split(/\r?\n/), " "];
+  ocr = { det, latin: { rec, chars: chars(keys) }, arabic: { rec: recAr, chars: chars(keysAr), rtl: true } };
   return ocr;
 }
 
@@ -514,7 +558,24 @@ async function detect(bitmap, m) {
   return boxes;
 }
 
-/** Reads one text line: the rectangle straightened, 48 px high, then the most likely characters (CTC). */
+/**
+ * Arabic as read (left to right on the photo) back in its own order: the runs of Latin letters and digits kept as they
+ * are, everything else reversed (PaddleOCR's pred_reverse; Arabic-Indic digits are numbers too).
+ */
+function rtlOrder(text) {
+  const runs = [];
+  let ltr = "";
+  for (const ch of text) {
+    if (/[a-zA-Z0-9 :*./%+\-٠-٩]/.test(ch)) { ltr += ch; continue; }
+    if (ltr) runs.push(ltr);
+    runs.push(ch);
+    ltr = "";
+  }
+  if (ltr) runs.push(ltr);
+  return runs.reverse().join("");
+}
+
+/** Reads one text line with one reader ({ rec, chars, rtl }): the rectangle straightened, 48 px high, then the most likely characters (CTC). */
 async function recognise(bitmap, box, m) {
   const [tl, tr, , bl] = box.p;
   let w = Math.max(1, Math.round(box.w)), h = Math.max(1, Math.round(box.h));
@@ -547,8 +608,10 @@ async function recognise(bitmap, box, m) {
     if (bi !== 0 && bi !== last) { text += m.chars[bi] ?? ""; conf += bp; kept++; }
     last = bi;
   }
-  return { text, confidence: kept ? conf / kept : 0 };
+  return { text: m.rtl ? rtlOrder(text) : text, confidence: kept ? conf / kept : 0 };
 }
+
+const ARABIC = /[؀-ۿ]/g;
 
 /** The box's text lines for the box matcher: [{ text, confidence, height }]. */
 async function readText(file) {
@@ -556,11 +619,17 @@ async function readText(file) {
   const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
   const lines = [];
   for (const box of await detect(bitmap, m)) {
-    const r = await recognise(bitmap, box, m);
+    let r = await recognise(bitmap, box, m.latin);
+    // Arabic when the Arabic reader sees Arabic letters, mostly, and reads them surely enough
+    const a = await recognise(bitmap, box, m.arabic);
+    const letters = (a.text.match(ARABIC) ?? []).length;
+    const ar = letters >= 2 && letters >= 0.5 * a.text.replace(/[\s\d٠-٩.%/-]/g, "").length && a.confidence >= 0.6;
+    if (ar) r = a;
     if (!r.text.trim() || r.confidence < 0.5) continue;
     // where it stands on the photo too: the biggest words side by side are the medicine's name
+    // (v: written upwards, as on a box's side)
     lines.push({ text: r.text, confidence: r.confidence, height: r.text.length > 2 ? Math.min(box.w, box.h) : box.h,
-      x: box.p[0][0], y: box.p[0][1], w: box.w });
+      x: box.p[0][0], y: box.p[0][1], w: box.w, ...(ar ? { ar: true } : {}), ...(box.h / box.w >= 1.5 ? { v: true } : {}) });
   }
   return lines;
 }
@@ -581,7 +650,7 @@ self.onmessage = async ({ data: msg }) => {
     } else if (msg.type === "clean") {
       if (!msg.plain) await load(() => {});
       const t0 = performance.now();
-      const r = await clean(msg.file, msg.plain, msg.seeds ?? [], msg.lines ?? []);
+      const r = await clean(msg.file, msg.plain, msg.seeds ?? []);
       self.postMessage({ id: msg.id, ok: true, value: { ...r, ms: Math.round(performance.now() - t0), kind: session?.kind } });
     }
   } catch (e) {
