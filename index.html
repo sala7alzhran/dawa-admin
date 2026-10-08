@@ -223,12 +223,12 @@ a{color:var(--btn)}
 <div id="toast" class="toast hidden"></div>
 
 <!-- every file of one version of the panel together (tools/panel_publish.py writes the version): a browser never mixes an old file with a new one -->
-<script type="importmap">{"imports":{"./catalog.js":"./catalog.js?v=20261008.1618","./names.js":"./names.js?v=20261008.1618","./rules.js":"./rules.js?v=20261008.1618","./packs.js":"./packs.js?v=20261008.1618","./cutout.js":"./cutout.js?v=20261008.1618","./boxmatch.js":"./boxmatch.js?v=20261008.1618","./arabic.js":"./arabic.js?v=20261008.1618","./ocr.js":"./ocr.js?v=20261008.1618"}}</script>
+<script type="importmap">{"imports":{"./catalog.js":"./catalog.js?v=20261008.2059","./names.js":"./names.js?v=20261008.2059","./rules.js":"./rules.js?v=20261008.2059","./packs.js":"./packs.js?v=20261008.2059","./cutout.js":"./cutout.js?v=20261008.2059","./boxmatch.js":"./boxmatch.js?v=20261008.2059","./arabic.js":"./arabic.js?v=20261008.2059","./ocr.js":"./ocr.js?v=20261008.2059"}}</script>
 <script type="module">
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { initCatalog } from "./catalog.js";
 
-const PANEL_VERSION = "20261008.1618";
+const PANEL_VERSION = "20261008.2059";
 
 const URL_ = "https://lqrplbxlvslehopiczmi.supabase.co";
 const KEY = "sb_publishable_Kaj0gTFO9WDDhRVTjFq_ow_Y-PEA5kQ";
@@ -239,13 +239,14 @@ const $ = (id) => document.getElementById(id);
 const GOV = { damascus: "دمشق", rif_dimashq: "ريف دمشق", aleppo: "حلب", homs: "حمص", hama: "حماة", latakia: "اللاذقية", tartus: "طرطوس",
   idlib: "إدلب", deir_ez_zor: "دير الزور", raqqa: "الرقة", hasakah: "الحسكة", daraa: "درعا", sweida: "السويداء", quneitra: "القنيطرة" };
 const STATE = {
-  trial: ["في التجربة", "p-trial"], subscribed: ["مشتركة", "p-sub"], trial_ended: ["انتهت التجربة", "p-ended"],
-  expired: ["انتهى الاشتراك", "p-exp"], stopped: ["موقوفة", "p-stop"],
+  trial: ["في التجربة", "p-trial"], subscribed: ["مشتركة", "p-sub"], trial_ended: ["مجانية (الأسعار فقط)", "p-ended"],
+  expired: ["انتهى الاشتراك", "p-exp"], stopped: ["موقوفة", "p-stop"], moved: ["انتقل اشتراكها لجوال آخر", "p-exp"],
 };
 const ACTION = { activate: "تفعيل", deactivate: "إلغاء التفعيل", extend_trial: "تمديد التجربة", stop: "إيقاف", restore: "إعادة تشغيل",
   login: "دخول إلى اللوحة", login_failed: "كلمة سر خاطئة", set_password: "وضع كلمة السر", change_password: "تغيير كلمة السر",
   drug_add: "إضافة دواء", drug_change: "تعديل دواء", photo_add: "إضافة صورة", photo_change: "استبدال صورة", undo: "تراجع",
-  rate_set: "سعر الدولار", prices_zena: "نشر أسعار زينا", prices_united: "تحديث الليرة التركية" };
+  rate_set: "سعر الدولار", prices_zena: "نشر أسعار زينا", prices_united: "تحديث الليرة التركية",
+  offer_on: "تشغيل عرض الإطلاق", offer_off: "إيقاف عرض الإطلاق" };
 const num = (x) => new Intl.NumberFormat("ar-SY-u-nu-latn", { maximumFractionDigits: 2 }).format(Number(x));
 const fmtDate = (d) => new Intl.DateTimeFormat("ar-SY-u-nu-latn", { day: "numeric", month: "long", year: "numeric" }).format(d);
 const fmtDay = (day) => fmtDate(new Date(day * 86400000));
@@ -351,13 +352,12 @@ function renderHome() {
   const count = (s) => ps.filter((p) => p.state === s).length;
   $("home-sub").textContent = `${ps.length} صيدلية مسجّلة`;
   const cards = [["all", "كل الصيدليات", ps.length], ["trial", "في التجربة", count("trial")], ["subscribed", "مشتركة", count("subscribed")],
-    ["trial_ended", "انتهت تجربتها", count("trial_ended")], ["stopped", "موقوفة", count("stopped")]];
+    ["trial_ended", "مجانية", count("trial_ended")], ["stopped", "موقوفة", count("stopped")]];
   $("stats").innerHTML = cards.map(([k, l, n]) => `<button class="stat" data-f="${k}"><div class="n">${n}</div><div class="l">${l}</div></button>`).join("");
   $("stats").querySelectorAll(".stat").forEach((b) => (b.onclick = () => { filter = b.dataset.f; renderList(); view("ph"); }));
   const t = data.today;
   const att = [
     ...ps.filter((p) => p.state === "trial" && p.trial_left <= 3).map((p) => [p, `تجربتها تنتهي خلال ${p.trial_left} يوم: تواصل معها`]),
-    ...ps.filter((p) => p.state === "trial_ended").map((p) => [p, "انتهت تجربتها ولم تشترك بعد"]),
     ...ps.filter((p) => p.state === "subscribed" && !p.lifetime && p.until_day - t <= 30).map((p) => [p, `اشتراكها ينتهي ${fmtDay(p.until_day)}: ذكّرها بالتجديد`]),
     ...ps.filter((p) => p.state === "expired").map((p) => [p, "انتهى اشتراكها"]),
   ];
@@ -442,7 +442,7 @@ async function loadPricesHead() {
 }
 
 let filter = "all";
-const FILTERS = [["all", "الكل"], ["trial", "في التجربة"], ["subscribed", "مشتركة"], ["trial_ended", "انتهت تجربتها"], ["expired", "انتهى اشتراكها"], ["stopped", "موقوفة"]];
+const FILTERS = [["all", "الكل"], ["trial", "في التجربة"], ["subscribed", "مشتركة"], ["trial_ended", "مجانية"], ["expired", "انتهى اشتراكها"], ["stopped", "موقوفة"]];
 $("q").oninput = () => renderList();
 function renderList() {
   $("filters").innerHTML = FILTERS.map(([k, l]) => `<button class="chip ${k === filter ? "on" : ""}" data-f="${k}">${l}</button>`).join("");
@@ -476,18 +476,18 @@ function open(p) {
     <button class="btn ghost small" id="x">إغلاق</button></div>
     <div style="margin:8px 0 14px">${pill(p)}</div>
     <div class="card">
-      ${kv("المحافظة", GOV[p.governorate])}${kv("العنوان", p.address)}${kv("الهاتف", p.phone, true)}${kv("البريد", p.email, true)}
+      ${kv("المحافظة", GOV[p.governorate])}${kv("العنوان", p.address)}${kv("الهاتف", p.phone, true)}${kv("حساب Google", p.google_email, true)}${p.google_email && p.google_email === p.email ? "" : kv("البريد", p.email, true)}
       ${kv("تاريخ التسجيل", fmtDate(new Date(p.first_seen)))}${kv("آخر اتصال", p.last_seen ? ago(p.last_seen) : "")}
       ${kv("الجوال", p.model, true)}${kv("إصدار التطبيق", p.app_version, true)}${kv("رمز الجهاز", p.device, true)}
       ${p.revoked_reason ? kv("سبب الإيقاف", p.revoked_reason) : ""}
     </div>
     ${link ? `<a class="btn ghost wide" href="${link}" target="_blank" rel="noopener">تواصل على واتساب</a>` : ""}
     <h2>التفعيل</h2>
+    <p class="note">أثبت لك أنه صيدلي؟ فعّل له كل الميزات شهرًا مجانًا. بعده يعود إلى الأسعار فقط، إلا إن اشترك.</p>
     <div class="actions">
-      <button class="btn" data-a="year">فعّل سنة</button>
-      <button class="btn" data-a="life" ${p.lifetime ? "disabled" : ""}>فعّل مدى الحياة</button>
-      <button class="btn ghost" data-a="month" ${p.lifetime ? "disabled" : ""}>أهدِها شهرًا مجانيًا</button>
-      <button class="btn ghost" data-a="extend" ${sub ? "disabled" : ""}>مدّد التجربة 7 أيام</button>
+      <button class="btn wide" data-a="month" ${p.lifetime ? "disabled" : ""}>صيدلي: شهر مجاني</button>
+      <button class="btn ghost" data-a="year">فعّل سنة</button>
+      <button class="btn ghost" data-a="life" ${p.lifetime ? "disabled" : ""}>فعّل مدى الحياة</button>
     </div>
     <p class="note">التفعيل يصل إلى جوال الصيدلية عند اتصالها التالي (خلال 12 ساعة)، أو فورًا إن ضغطت «تحقّق الآن» في تطبيقها. لا حاجة لأي كود.</p>
     <h2>الإيقاف</h2>
@@ -509,7 +509,7 @@ async function act(p, a) {
   const text = {
     year: `ستُفعَّل «${name}» سنة كاملة، حتى ${fmtDay(base + 365)}.`,
     life: `ستُفعَّل «${name}» مدى الحياة.`,
-    month: `ستُهدى «${name}» شهرًا مجانيًا، حتى ${fmtDay(base + 30)}.`,
+    month: `ستُفتح كل الميزات لـ«${name}» شهرًا مجانًا (صيدلي)، حتى ${fmtDay(base + 30)}.`,
     extend: `ستُمدَّد تجربة «${name}» 7 أيام.`,
     stop: `ستُوقف أدوات «${name}» عند اتصالها التالي.`,
     restore: `ستُعاد أدوات «${name}» للعمل عند اتصالها التالي.`,

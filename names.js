@@ -259,8 +259,9 @@ export function drugRow(f) {
     form_code: formCode(f.form_ar.trim()), category_ar: catAr, category_en: catEn,
     search: searchKey(brand, trade, arName, comp, maker, makerShort), ar_key: normalize(arName),
     sound: soundKey(brand, arName, comp.replaceAll("+", " ")), maker_short: makerShort,
-    usd: f.usd === "" || f.usd == null ? null : Number(f.usd), source: f.source || "DW",
-    cost_usd: f.cost_usd === "" || f.cost_usd == null ? null : Number(f.cost_usd),
+    price: f.price === "" || f.price == null ? null : Number(f.price), source: f.source || "DW",
+    // the cost is the pharmacy's own (the owner's decision of 2026-10-09): never from the list
+    cost: null,
     barcodes: (f.barcodes || []).map((b) => String(b).trim()).filter(Boolean),
   };
 }

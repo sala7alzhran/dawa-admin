@@ -12,7 +12,7 @@ import { readBox } from "./ocr.js";
 const COUNTRY = "SY";
 const SQLJS = "https://cdn.jsdelivr.net/npm/sql.js@1.13.0/dist/";
 const COLS = ["id", "trade", "trade_ar", "brand", "brand_key", "maker", "composition", "strength", "pack_count", "pack_unit", "form_ar",
-  "form_code", "category_ar", "category_en", "search", "ar_key", "sound", "maker_short", "usd", "source", "cost_usd"];
+  "form_code", "category_ar", "category_en", "search", "ar_key", "sound", "maker_short", "price", "source", "cost"];
 const SOURCE = { MOH: "قائمة وزارة الصحة", UP: "قائمة الصيادلة المتحدين", CO: "من صور شركة", DW: "أضفته من اللوحة" };
 const UNITS = [["TAB", "أقراص"], ["CAP", "محافظ"], ["ML", "مل"], ["G", "غرام"], ["AMP", "أمبولات"], ["VIAL", "فيالات"], ["SACHET", "ظروف"],
   ["SUPP", "تحاميل"], ["", "لا شيء"]];
@@ -166,7 +166,7 @@ function medRow(d, i) {
   return `<div class="card row med" data-i="${i}">
     <img class="thumb nophoto" data-photo="${d.id}" alt="">
     <div class="main"><div class="name" dir="auto">${esc(title(d))}</div><div class="meta">${esc(d.trade_ar)} · ${esc(subtitle(d))}</div>
-    <div class="badges">${has ? "" : `<span class="pill p-ended">بلا صورة</span>`}${d.usd == null ? `<span class="pill p-exp">بلا سعر</span>` : ""}${mine ? `<span class="pill p-sub">أضفته أنت</span>` : ""}</div></div></div>`;
+    <div class="badges">${has ? "" : `<span class="pill p-ended">بلا صورة</span>`}${d.price == null ? `<span class="pill p-exp">بلا سعر</span>` : ""}${mine ? `<span class="pill p-sub">أضفته أنت</span>` : ""}</div></div></div>`;
 }
 
 // ---------------------------------------------------------------- the main view
@@ -292,7 +292,7 @@ async function medSheet(id) {
     <div class="card" style="margin-top:12px">
       ${kv("العيار", d.strength, true)}${kv("الشكل", d.form_ar)}${kv("العبوة", d.pack_count ? subtitle({ ...d, form_ar: "", maker_short: "", maker: "" }) : "")}
       ${kv("المادة الفعالة", d.composition, true)}${kv("الشركة", d.maker)}${kv("الفئة", d.category_ar)}
-      ${kv("سعر البيع", d.usd != null ? `${d.usd} $` : "لا سعر")}${kv("التكلفة", d.cost_usd != null ? `${d.cost_usd} $` : "")}
+      ${kv("سعر البيع", d.price != null ? `${d.price} ل.س` : "لا سعر")}
       ${kv("الباركود", codes.join("، "), true)}${kv("المصدر", SOURCE[d.source] ?? d.source)}${kv("رقمه في القائمة", String(d.id), true)}
     </div>
     ${hist.length ? `<h2>تغييراته</h2><div class="card">${hist.map((c) => `<div class="logrow"><div class="t">${fmtTime(c.at)}</div><div>${c.note?.startsWith("undo #") ? "تراجع" : ACT[c.kind][c.action](c)}${c.undone_by ? " · تراجعتَ عنه" : ""}</div></div>`).join("")}</div>` : ""}`);
@@ -315,8 +315,7 @@ const FIELDS = [
   ["composition", "المادة الفعالة", "AMOXICILLIN+CLAVULANIC ACID"],
   ["maker", "الشركة", "ابدأ بالكتابة واختر من القائمة"],
   ["barcodes", "الباركود (إن وُجد)", "6251234567890"],
-  ["usd", "سعر البيع بالدولار", "2.50"],
-  ["cost_usd", "التكلفة بالدولار (اختياري)", "1.85"],
+  ["price", "سعر البيع بالليرة السورية", "250"],
 ];
 const LABEL = Object.fromEntries(FIELDS.map(([k, l]) => [k, l.replace(/ \(.*\)$/, "")]));
 
@@ -333,9 +332,9 @@ function medForm(d, preset = {}, onSaved = null) {
     const val = v[k] ?? "";
     let field;
     if (k === "pack_unit") field = `<select id="f-${k}">${UNITS.map(([c, n]) => `<option value="${c}" ${c === val ? "selected" : ""}>${n}</option>`).join("")}</select>`;
-    else field = `<input id="f-${k}" type="text" value="${esc(val)}" placeholder="${esc(ph)}" ${["brand", "strength", "composition", "barcodes", "usd", "cost_usd", "pack_count"].includes(k) ? 'dir="ltr"' : ""}
-      ${k === "form_ar" ? 'list="dl-forms"' : k === "maker" ? 'list="dl-makers"' : k === "composition" ? 'list="dl-comps"' : ""} ${["usd", "cost_usd", "pack_count"].includes(k) ? 'inputmode="decimal"' : ""}>`;
-    return `<div class="${["pack_count", "pack_unit", "usd", "cost_usd"].includes(k) ? "half" : "full"}"><label for="f-${k}">${label}${req ? " *" : ""}</label>${field}</div>`;
+    else field = `<input id="f-${k}" type="text" value="${esc(val)}" placeholder="${esc(ph)}" ${["brand", "strength", "composition", "barcodes", "price", "pack_count"].includes(k) ? 'dir="ltr"' : ""}
+      ${k === "form_ar" ? 'list="dl-forms"' : k === "maker" ? 'list="dl-makers"' : k === "composition" ? 'list="dl-comps"' : ""} ${["price", "pack_count"].includes(k) ? 'inputmode="decimal"' : ""}>`;
+    return `<div class="${["pack_count", "pack_unit", "price"].includes(k) ? "half" : "full"}"><label for="f-${k}">${label}${req ? " *" : ""}</label>${field}</div>`;
   };
   const bg = dialog(`
     <div style="display:flex;align-items:center;gap:10px;justify-content:space-between"><h1 style="margin:0">${editing ? "تعديل دواء" : "دواء جديد"}</h1>
@@ -419,12 +418,12 @@ function showCheck(bg, f, d, onSaved = null) {
   lazyPhotos(el);
 }
 
-const SHOWN = ["brand", "trade_ar", "strength", "form_ar", "pack_count", "pack_unit", "composition", "maker", "barcodes", "usd", "cost_usd"];
+const SHOWN = ["brand", "trade_ar", "strength", "form_ar", "pack_count", "pack_unit", "composition", "maker", "barcodes", "price"];
 const show = (k, v) => (k === "barcodes" ? (v || []).join("، ") : k === "pack_unit" ? UNITS.find((u) => u[0] === v)?.[1] ?? v : v ?? "");
 const same = (k, a, b) => (k === "barcodes" ? [...(a || [])].sort().join() === [...(b || [])].sort().join() : String(a ?? "").trim() === String(b ?? "").trim());
 
 /** A medicine's row from the list (with its barcodes), in the form's terms. */
-const asForm = (r) => ({ ...r, pack_count: r.pack_count ? String(r.pack_count) : "", usd: r.usd ?? "", cost_usd: r.cost_usd ?? "", barcodes: codesOf(r.id) });
+const asForm = (r) => ({ ...r, pack_count: r.pack_count ? String(r.pack_count) : "", price: r.price ?? "", barcodes: codesOf(r.id) });
 /** A medicine's row exactly as the list has it, kept with a change so that undoing puts it back. */
 const keep = (r) => { const { id, ...row } = r; return { ...row, barcodes: codesOf(id) }; };
 /** Fields the admin filled in themselves (not left empty, not filled in by the form). */
@@ -466,7 +465,7 @@ async function saveMed(bg, f, d, onSaved = null) {
   const added = (ref) => (onSaved ? onSaved(ref) : medSheet(ref));
   if (!f.brand) return ctx.toast("اكتب اسم الدواء بالإنجليزية كما على العلبة.");
   if (!f.form_ar) return ctx.toast("اختر شكل الدواء (أقراص، شراب…).");
-  for (const k of ["usd", "cost_usd", "pack_count"]) if (f[k] && !(Number(f[k]) >= 0)) return ctx.toast(`${LABEL[k]}: اكتب رقمًا.`);
+  for (const k of ["price", "pack_count"]) if (f[k] && !(Number(f[k]) >= 0)) return ctx.toast(`${LABEL[k]}: اكتب رقمًا.`);
   if (d) {
     // changing a medicine: show what changes, then save
     const old = asForm(d);
